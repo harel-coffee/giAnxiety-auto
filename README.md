@@ -1,6 +1,6 @@
 # Predicting Mental Health Risk In Primary Healthcare Settings: A Rapid Gastrointestinal Screener for Mental Health Outcomes in Youth
 
-Paul A. Bloom, Ian Douglas, Michelle VanTieghem, Nim Tottenham, & Bridget Callachan
+Paul A. Bloom, Ian Douglas, Michelle VanTieghem, Nim Tottenham, & Bridget Callaghan
 
 ## Repository for analysis on GI items predicting anxiety
 
@@ -13,7 +13,7 @@ Manuscript currently in prep!
 App beta can be found [here:](https://pbloom.shinyapps.io/gishinyapp/)
 
 <p float="left">
-  <img src="/images/screenshot.png" width="500" />
+  <img src="/images/screenshot.png" width="650" />
 </p>
 
 

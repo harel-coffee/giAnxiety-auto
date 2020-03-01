@@ -1,0 +1,376 @@
+---
+title: "7: Exploratory Analyses between GI symptoms and likelihood of many KSADS diagnoses"
+author: "Paul A. Bloom"
+date: "August 5, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+In this markdown, first we fit logistic regression models to each respective KSADS diagnosis (plus 'no diagnosis') estimating associations between GI symptoms and the likelihood of each diagnosis. Then, we cross-validate models for each outcome (both including and without age/sex predictors and look at AUC performance). The markdown exports plots. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(arm)
+library(caret)
+library(pROC)
+library(cowplot)
+```
+
+# Pull in data for many diagnoses
+
+```{r}
+# data frame for many KSADS diagnoses
+diagFrame = read.csv('../cleanData/clinicianConsensusDiagnoses.csv', stringsAsFactors = FALSE)
+
+# Pull in full CBCL/demographic data
+cbcl = read.csv('../cleanData/fullHBN.csv', stringsAsFactors = FALSE) 
+
+# join with cbcl data
+cbcl = left_join(cbcl, diagFrame, by = 'Identifiers') 
+names(cbcl)[17] = 'incompleteDiag'
+
+# take out people with incomplete diagnoses
+cbcl = cbcl %>%
+  filter(., `incompleteDiag` != 1)
+
+```
+
+# Figure out which diagnoses are prevalent in at least 1% of the sample
+
+```{r}
+# Convert to long
+cbclLong = cbcl %>%
+  tidyr::gather(., key = diagnosisType, value = diagnosis, 15:73) 
+
+# Calculate prevalence of each diagnosis
+prevalance = cbclLong %>%
+  group_by(diagnosisType) %>%
+  summarise(n = n(), total = sum(diagnosis), prop = sum(diagnosis/n))
+
+# only use diagnoses occuring in more than 1% of the cohort
+prevFrame = dplyr::filter(prevalance, prop > .01)
+```
+
+# Nest and run models
+```{r}
+# Filter for only diagnoses for over 1% of the cohort, nest for each diagnosis type, then for each diagnosis run a separate logistic regression, then use broom() to pull the model coefficients
+cbclNest = cbclLong %>% 
+  dplyr::filter(., diagnosisType %in% prevFrame$diagnosisType) %>%
+  nest(-diagnosisType) %>%
+  mutate(., models = map(data, 
+                         ~glm(diagnosis ~ ageCenter + sex + cbclGISum, data = ., family = binomial(link = 'logit')))) %>%
+  mutate(., coefs = map(models, ~broom::tidy(.)))
+
+
+# Pull coefficients out of each model using unnest(), then filter to look at the GI term in each model specifically
+# Calculate the 95% confidence interval bounds approximately using 2*std.error
+cbclCoefs = dplyr::select(cbclNest, coefs, diagnosisType) %>%
+  unnest(., coefs) %>%
+  dplyr::filter(., term == 'cbclGISum') %>%
+  mutate(., lwr = estimate - 2*std.error, upr = estimate + 2*std.error) %>%
+  left_join(., prevalance) %>%
+  mutate(., diagnosisType = gsub('\\.', ' ', diagnosisType),
+         name = diagnosisType)
+```
+
+# Format data and variable names for plotting
+
+```{r}
+# Change factor names for diagnoses
+cbclCoefs$name[cbclCoefs$name == 'Social Anxiety  Social Phobia '] = 'Social Anxiety/Social Phobia'
+cbclCoefs$name[cbclCoefs$name == 'Persistent Depressive Disorder  Dysthymia '] = 'Persistent Depressive Disorder (Dysthymia)'
+
+# Add sample proportion with the diagnosis to the name of each diagnosis to display on the plot
+cbclCoefs$diagnosisType = paste0(cbclCoefs$name,' (', as.character(round(cbclCoefs$total/nrow(cbcl),3)), ')')
+
+
+# Make groupings for each diagnosis based on diagnosis class
+anxietyDisorders = c('Other Specified Anxiety Disorder', 'Social Anxiety/Social Phobia', 
+                     'Specific Phobia', 'Generalized Anxiety Disorder', 'Separation Anxiety', 'Obsessive Compulsive Disorder',
+                     'Posttraumatic Stress Disorder')
+moodDisorders = c('Major Depressive Disorder', 'Persistent Depressive Disorder (Dysthymia)', 
+                  'Adjustment Disorders', 'Disruptive Mood Dysregulation Disorder')
+
+ndDisorders = c('Autism Spectrum Disorder', 
+                'Language Disorder',
+                'Persistent  Chronic  Motor or Vocal Tic Disorder', 
+                'Provisional Tic Disorder',
+                'ADHD Combined Type', 
+                'ADHD Inattentive Type',
+                'ADHD Hyperactive Impulsive Type',
+                'Other Specified Attention Deficit Hyperactivity Disorder')
+
+learningDisorders = c('Specific Learning Disorder with Impairment in Written Expression', 
+                      'Specific Learning Disorder with Impairment in Mathematics',
+                      'Specific Learning Disorder with Impairment in Reading')
+
+eliminationDisorders = c('Enuresis', 'Encopresis')
+behavioralDisorders = c('Oppositional Defiant Disorder')
+
+
+# Reorder factor levels for plotting based on logistic regression beta estimate magnitude
+cbclCoefs$diagnosisType <- factor(cbclCoefs$diagnosisType, 
+                                  levels =cbclCoefs$diagnosisType[order(cbclCoefs$estimate)])
+
+# Filter on the disorders where the logistic regression was sufficiently precise (std. error of the beta < .15)
+# Add groupings for disorder classes in the dataframe
+cbclCoefsEstimatedEnough = dplyr::filter(cbclCoefs, std.error < .15) %>%
+  mutate(., group = case_when(
+    name %in% anxietyDisorders ~ 'Anxiety Disorders',
+    name %in% moodDisorders ~ 'Mood Disorders',
+    name %in% ndDisorders ~ 'Neurodevelopmental Disorders',
+    name %in% learningDisorders ~ 'Learning Disorders',
+    name %in% eliminationDisorders ~ 'Elimination Disorders',
+    name %in% behavioralDisorders ~ 'Behavioral Disorders',
+    name == 'No Diagnosis Given' ~ 'No Disorder'))
+
+```
+
+
+# Plot logit regresison betas
+```{r}
+allDiagPlot = ggplot(cbclCoefsEstimatedEnough, aes(x = diagnosisType, y = estimate)) + 
+  geom_hline(yintercept = 0, lty = 2, color = 'red') +
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0) +
+  geom_point(aes(color = group)) +
+  coord_flip() +
+  theme_bw() +
+  labs(y = 'Logistic Regression Betas', x = '', title = 'A') +
+  theme(text = element_text(face = 'bold')) +
+  facet_wrap('group', ncol = 1, drop = TRUE, scales = 'free_y') +
+  theme(legend.position = 'none', panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank())
+
+
+allDiagPlot
+
+ggsave(allDiagPlot, width = 12, height = 10, file = '../plots/allDiagPlot.pdf')
+```
+
+
+# Do cross-validation for all diagnoses
+
+Each round of cross val trains on 75% of data, tests on 25%. This chunk should result in an output dataframe called cvOutput where each row is one diagnosis, and each column (after the first one which indicates the diagnosis type) the auc result for each diagnosis for one iteration.
+```{r}
+# n sets the number of iterations of differently-seeded cross-val
+n = 100
+
+# Outer loop for iterations of cross val, splitting data
+for (j in 1:n){
+  set.seed(j) # set different seed eah time to get a different split
+  trainSamples = sample(cbcl$Identifiers, size = round(nrow(cbcl)*.75), replace = FALSE)
+  
+  # Nest the data and train models for each respective diagnosis only on training set
+  # This chunk makes sure to filter the nested dataset to only train the model on participants with set == 'train'
+  cbclNestCV = cbclLong %>% 
+    dplyr::mutate(., set = ifelse(Identifiers %in% trainSamples, 'train', 'test')) %>%
+    dplyr::filter(., diagnosisType %in% prevFrame$diagnosisType) %>%
+    nest(-diagnosisType) %>%
+    mutate(., models = map(data, 
+                           ~glm(diagnosis ~ cbclGISum, data = filter(., set == 'train'), family = binomial(link = 'logit')))) 
+  
+  # Inner loop to get AUC of each model
+  for (i in 1:nrow(cbclNestCV)){
+      # get predictions just for held out set
+      # This line makes sure to only pull preds for the part of the nested dataset where set == 'test'
+      cbclNestCV$preds[i] = list(predict(cbclNestCV$models[[i]], 
+                                         type = 'response', newdata = dplyr::filter(cbclNestCV$data[[i]], set == 'test')))
+      
+      # pull actual outcomes to compare to predictions (just for set == 'test')
+      cbclNestCV$actual[i] = list(dplyr::filter(cbclNestCV$data[[i]], set == 'test')$diagnosis)
+  
+      # get auc, save into output auc dataframe
+      cbclNestCV$auc[i] = try((auc(cbclNestCV$actual[[i]], cbclNestCV$preds[[i]]))[1])
+      
+  }
+  # each time through the loop, save CV outputs to a dataframe called cvOutput
+  if (j == 1){ # create the dataframe if this is the first iteration of the loop, otherwise just add auc as a new column
+    cvOutput = dplyr::select(cbclNestCV, diagnosisType, auc)
+  }
+  else{
+    cvOutput = cbind(cvOutput, cbclNestCV$auc)
+  }
+}
+```
+
+# Reformat CV results for summarizing AUC for each diagnosis, and plotting
+
+```{r}
+# change names
+names(cvOutput) = c('diagnosisType', 1:j)
+
+# cast to long
+cvOutput = tidyr::gather(cvOutput, key = 'index', value = 'auc', -diagnosisType) 
+
+# get summary stats
+# on a few of the iterations, it is possible that AUC failed due to nonexistent classes in the test set -- filter these out for estimating AUC distributions
+cvOutputSummary = cvOutput %>%
+  mutate(., auc = as.numeric(auc)) %>%
+  dplyr::filter(., !is.na(auc)) %>%
+  group_by(diagnosisType) %>%
+  summarise(., 
+            lwr95 = quantile(auc, probs = .025),
+            lwr80 = quantile(auc, probs = .1),
+            mean = mean(auc), 
+            upr95 = quantile(auc, probs = .975),
+            upr80 = quantile(auc, probs = .9))
+
+# remove extra punctuation from diagnosis names
+cvOutputSummary$name = gsub('\\.', ' ', cvOutputSummary$diagnosisType)
+
+# Change factor names for diagnoses
+cvOutputSummary$name[cvOutputSummary$name == 'Social Anxiety  Social Phobia '] = 
+  'Social Anxiety/Social Phobia'
+cvOutputSummary$name[cvOutputSummary$name == 'Persistent Depressive Disorder  Dysthymia '] = 
+  'Persistent Depressive Disorder (Dysthymia)'
+
+# join with cv data with logistic reg data
+cvOutputSummary = left_join(dplyr::select(cvOutputSummary, -diagnosisType), cbclCoefsEstimatedEnough, by = 'name') %>%
+  dplyr::filter(., name %in% cbclCoefsEstimatedEnough$name)
+
+# Make CV plot
+cvPlot = ggplot(cvOutputSummary, aes(x = diagnosisType, y = mean)) +
+  geom_hline(yintercept = .5, lty = 2, color = 'red') +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0) +
+  geom_point(aes(color = group)) +
+  facet_wrap('group', scales = 'free_y', ncol = 1) +
+  coord_flip() +
+  theme_bw() +
+  labs(y = 'Cross-Validated AUC', x = '', title = 'B') +
+  theme(text = element_text(face = 'bold')) +
+  theme(legend.position = 'none', axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank())
+
+cvPlot
+```
+
+# Put cross-validation plot and regression betas plot together in a multipanel plot, export to pdf
+```{r}
+pdf('../plots/allDiagCV.pdf', height = 10, width = 10)
+plot_grid(allDiagPlot, cvPlot, ncol=2, align="h", rel_widths = c(3,1.2))
+dev.off()
+```
+
+
+# Additional cross-validation for all diagnoses WITH age + sex in the models
+
+Each round of cross val trains on 75% of data, tests on 25%
+```{r}
+# n sets the number of iterations of randomly seeded cross val
+n = 100
+
+# Outer loop for iterations of cross val, splitting data
+for (j in 1:n){
+  set.seed(j) # set different seed eah time to get a different split
+  trainSamples = sample(cbcl$Identifiers, size = round(nrow(cbcl)*.75), replace = FALSE)
+  
+  # Nest the data and atrain models only on training set
+  cbclNestcvAgeSex = cbclLong %>% 
+    dplyr::mutate(., set = ifelse(Identifiers %in% trainSamples, 'train', 'test')) %>%
+    dplyr::filter(., diagnosisType %in% prevFrame$diagnosisType) %>%
+    nest(-diagnosisType) %>%
+    mutate(., models = map(data, 
+                           ~glm(diagnosis ~ cbclGISum + ageCenter + sex, data = filter(., set == 'train'), family = binomial(link = 'logit')))) 
+  
+  # Inner loop to get AUC of each model
+  for (i in 1:nrow(cbclNestcvAgeSex)){
+      # get predictions just for held out set
+      cbclNestcvAgeSex$preds[i] = list(predict(cbclNestcvAgeSex$models[[i]], 
+                                         type = 'response', newdata = dplyr::filter(cbclNestcvAgeSex$data[[i]], set == 'test')))
+      
+      # pull actual outcomes to compare to predictions
+      cbclNestcvAgeSex$actual[i] = list(dplyr::filter(cbclNestcvAgeSex$data[[i]], set == 'test')$diagnosis)
+  
+      # get auc
+      cbclNestcvAgeSex$auc[i] = try((auc(cbclNestcvAgeSex$actual[[i]], cbclNestcvAgeSex$preds[[i]]))[1])
+      
+  }
+  # each time through the loop, save cvAgeSex outputs 
+  if (j == 1){
+    cvAgeSexOutput = dplyr::select(cbclNestcvAgeSex, diagnosisType, auc)
+  }
+  else{
+    cvAgeSexOutput = cbind(cvAgeSexOutput, cbclNestcvAgeSex$auc)
+  }
+}
+```
+
+# Reformat cvAgeSex result for plotting
+
+```{r}
+# change names
+names(cvAgeSexOutput) = c('diagnosisType', 1:j)
+
+# cast to long
+cvAgeSexOutput = tidyr::gather(cvAgeSexOutput, key = 'index', value = 'auc', -diagnosisType) 
+
+# get summary stats
+cvAgeSexOutputSummary = cvAgeSexOutput %>%
+  mutate(., auc = as.numeric(auc)) %>%
+  dplyr::filter(., !is.na(auc)) %>%
+  group_by(diagnosisType) %>%
+  summarise(., 
+            lwr95 = quantile(auc, probs = .025),
+            lwr80 = quantile(auc, probs = .1),
+            mean = mean(auc), 
+            upr95 = quantile(auc, probs = .975),
+            upr80 = quantile(auc, probs = .9))
+
+# remove punctuation from variable levels
+cvAgeSexOutputSummary$name = gsub('\\.', ' ', cvAgeSexOutputSummary$diagnosisType)
+
+# Change factor names for diagnoses
+cvAgeSexOutputSummary$name[cvAgeSexOutputSummary$name == 'Social Anxiety  Social Phobia '] = 'Social Anxiety/Social Phobia'
+cvAgeSexOutputSummary$name[cvAgeSexOutputSummary$name == 'Persistent Depressive Disorder  Dysthymia '] = 'Persistent Depressive Disorder (Dysthymia)'
+
+# join with logistic reg data
+cvAgeSexOutputSummary = left_join(dplyr::select(cvAgeSexOutputSummary, -diagnosisType), cbclCoefsEstimatedEnough, by = 'name') %>%
+  dplyr::filter(., name %in% cbclCoefsEstimatedEnough$name)
+```
+
+
+# Make plot comparing cv results depending on if models include age and sex predictors or not
+```{r}
+# label output summaries and bind together
+cvOutputSummary$Predictors = 'GI Term Only'
+cvAgeSexOutputSummary$Predictors = 'GI + Age + Sex'
+cvSummaryModelComparison = plyr::rbind.fill(cvOutputSummary, cvAgeSexOutputSummary)
+
+# plot
+cvAgeSexPlot = ggplot(cvSummaryModelComparison, aes(x = diagnosisType, y = mean, color = Predictors)) +
+  geom_hline(yintercept = .5, lty = 2) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, alpha = .8, position = position_dodge(width = .2)) +
+  geom_point(alpha = .8, position = position_dodge(width = .2)) +
+  facet_wrap('group', scales = 'free_y', ncol = 1) +
+  coord_flip() +
+  theme_bw() +
+  labs(y = 'Cross-Validated AUC', x = '', title = 'Comparison of Predictive Performance: GI-only models vs. GI + Age + Sex') +
+  theme(text = element_text(face = 'bold')) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major.y = element_blank(),
+        plot.title= element_text(hjust = 1, size = 10),
+        strip.text.x = element_text(size = 8)) +
+  scale_color_brewer(palette = 'Set1')
+
+cvAgeSexPlot
+
+# save plot for supplemental
+ggsave(cvAgeSexPlot, file = '../plots/allDiagPlusAgeSexComp.pdf', width = 8, height = 10)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

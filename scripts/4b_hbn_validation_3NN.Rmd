@@ -1,0 +1,597 @@
+---
+title: "4b: Validation of GI-anxiety models in HBN holdout data  -- 3NN pipeline"
+author: "Paul A. Bloom"
+date: "September 10, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown calculates validation performance metrics for GI-anxiety models trained on the HBN training data on the HBN holdout data using permutation and bootstrapping. Outputs are plots. This markdown uses models fit to the 3NN pipeline. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Load pacakages/Set themes
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(rstanarm)
+library(pROC)
+library(gridExtra)
+
+# Plot theme
+mytheme = theme_bw() 
+theme_set(mytheme)
+
+# source helper functions
+source('helperFunctions.R')
+
+# color palette
+myPal3 = c('#2b8cbe', '#88419d','#cb181d')
+myPal3_reorder = c('#88419d', '#2b8cbe','#cb181d')
+myPal4 = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
+myPal4_reorder = c('#88419d', '#2b8cbe', '#238b45','#cb181d')
+
+```
+# Number of iterations (will affect runtime)
+
+```{r}
+nPerms = 10000
+nBoots = 10000
+```
+
+## Load in HBN Test Set
+
+```{r}
+hbnTest = read.csv('../cleanData/hbnTestComplete.csv', stringsAsFactors = FALSE)
+
+## Make test set templates for predictions
+hbnScaredChildTestTemplate = dplyr::select(hbnTest, -scaredSumParent, -scaredBinParent, -ksadsBin) %>%
+  dplyr::filter(., complete.cases(.))
+hbnScaredParentTestTemplate = dplyr::select(hbnTest, -scaredSumChild, -scaredBinChild, -ksadsBin) %>%
+  dplyr::filter(., complete.cases(.))
+hbnKsadsTest =dplyr::select(hbnTest, -scaredSumChild, -scaredBinChild, -scaredSumParent, -scaredBinParent) %>%
+  dplyr::filter(., complete.cases(.))
+```
+
+
+# Load model objects
+```{r}
+load('../output/scaredParentModels.rda')
+load('../output/scaredChildModels.rda')
+load('../output/KsadsModels.rda')
+```
+
+
+# Make predictions on the test set
+```{r}
+#Make predictions on the test set -- use templates so as not to overwrite previous prediction columns
+hbnScaredChildTest = makePreds(testData = hbnScaredChildTestTemplate, modelsFrame = threeNNScaredChildLinearModFrame, modelType = 'linear')
+hbnScaredParentTest = makePreds(testData = hbnScaredParentTestTemplate, modelsFrame = threeNNScaredParentLinearModFrame, modelType = 'linear')
+
+hbnScaredChildBinTest = makePreds(testData = hbnScaredChildTestTemplate, modelsFrame = threeNNScaredChildLogisticModFrame, modelType = 'logistic')
+hbnScaredParentBinTest = makePreds(testData = hbnScaredParentTestTemplate, modelsFrame = threeNNScaredChildLogisticModFrame, modelType = 'logistic')
+
+hbnKsadsTest = makePreds(testData = hbnKsadsTest, modelsFrame = threeNNKsadsLogisticModFrame, modelType = 'logistic')
+```
+
+# Permutation tests
+
+Here, run permutation tests for Q2 for the SCARED-P/SCARED-C regression models, as well as log loss and AUC for KSADS logistic models. 
+```{r}
+# Set up which columns to permute for each outcome
+predColsScaredChild = list('sum' = hbnScaredChildTest$sumPreds, 
+                           'indiv' = hbnScaredChildTest$indivPreds,
+                           'noGi' = hbnScaredChildTest$noGiPreds,
+                           'intercept' = hbnScaredChildTest$interceptPreds)
+
+predColsScaredParent = list('sum' = hbnScaredParentTest$sumPreds, 
+                           'indiv' = hbnScaredParentTest$indivPreds,
+                           'noGi' = hbnScaredParentTest$noGiPreds,
+                           'intercept' = hbnScaredParentTest$interceptPreds)
+
+
+predColsScaredBinChild = list('sum' = hbnScaredChildBinTest$sumPreds, 
+                           'indiv' = hbnScaredChildBinTest$indivPreds,
+                           'noGi' = hbnScaredChildBinTest$noGiPreds,
+                           'intercept' = hbnScaredChildBinTest$interceptPreds)
+
+predColsScaredBinParent = list('sum' = hbnScaredParentBinTest$sumPreds, 
+                           'indiv' = hbnScaredParentBinTest$indivPreds,
+                           'noGi' = hbnScaredParentBinTest$noGiPreds,
+                           'intercept' = hbnScaredParentBinTest$interceptPreds)
+
+
+predColsKsads = list('sum' = hbnKsadsTest$sumPreds, 
+                           'indiv' = hbnKsadsTest$indivPreds,
+                           'noGi' = hbnKsadsTest$noGiPreds,
+                           'intercept' = hbnKsadsTest$interceptPreds)
+```
+
+# Run permutations for each metric and outcome
+
+```{r}
+permQ2Child = permute(numPerms = nPerms, trueOutcome = hbnScaredChildTest$scaredSumChild, 
+        predCols = predColsScaredChild,
+        metric = 'q2')
+
+permQ2Parent = permute(numPerms = nPerms, trueOutcome = hbnScaredParentTest$scaredSumParent, 
+        predCols = predColsScaredParent,
+        metric = 'q2')
+
+
+permLogLossKsads = permute(numPerms = nPerms, trueOutcome = hbnKsadsTest$ksadsBin,
+                           predCols = predColsKsads,
+                           metric = 'crossEntropy')
+
+permAucKsads = permute(numPerms = nPerms, trueOutcome = hbnKsadsTest$ksadsBin,
+                           predCols = predColsKsads,
+                           metric = 'auc')
+
+
+permQ2Child$reporter = 'Child'
+permQ2Parent$reporter = 'Parent'
+```
+
+## Aggregate summaries of permuted outcomes
+```{r}
+# best permuted distribution for comparison
+# the bestPermute() function finds the permuted distribution with the null permuted model (GI Sum, GI Indiv. Items, or No-GI that has the best median performance as a baseline for comparison to ensure that all models are being compared to the same baseline)
+permQ2Child = bestPermute(permQ2Child, metric = 'q2')
+permQ2Parent = bestPermute(permQ2Parent, metric = 'q2')
+permLogLossKsads = bestPermute(permLogLossKsads, metric = 'crossEntropy')
+permAucKsads = bestPermute(permAucKsads, metric = 'auc')
+
+# long form for Q2 permutations
+permQ2Long = rbind(permQ2Child, permQ2Parent) %>%
+  tidyr::gather(., key = 'model', value = 'q2', -index, -reporter) %>%
+  mutate(., model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+# long form for KSADS
+permLogLossLong = permLogLossKsads%>%
+  tidyr::gather(., key = 'model', value = 'logLoss', -index) %>%
+  mutate(.,
+  model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+# long form for KSADS auc
+permAucLong = permAucKsads %>%
+  tidyr::gather(., key = 'model', value = 'auc', -index) %>%
+  mutate(., model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+```
+
+
+# Bootstraping
+
+  * For SCARED-P/SCARED-C: Q2, RMSE
+  * For KSADS: Log loss/AUC
+
+```{r}
+# q2 (SCARED)
+bootQ2Child = boots(numBoots = nBoots, trueOutcome = hbnScaredChildTest$scaredSumChild, 
+        predCols = predColsScaredChild,
+        metric = 'q2')
+
+bootQ2Parent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentTest$scaredSumParent, 
+        predCols = predColsScaredParent,
+        metric = 'q2')
+
+# rmse (SCARED)
+bootRMSEChild = boots(numBoots = nBoots, trueOutcome = hbnScaredChildTest$scaredSumChild, 
+        predCols = predColsScaredChild,
+        metric = 'rmse')
+
+bootRMSEParent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentTest$scaredSumParent, 
+        predCols = predColsScaredParent,
+        metric = 'rmse')
+
+# log los (SCARED/KSADS)
+bootLogLossKsads = boots(numBoots = nBoots, trueOutcome = hbnKsadsTest$ksadsBin, 
+        predCols = predColsKsads,
+        metric = 'crossEntropy')
+
+bootLogLossChild = boots(numBoots = nBoots, trueOutcome = hbnScaredChildBinTest$scaredBinChild, 
+        predCols = predColsScaredBinChild,
+        metric = 'crossEntropy')
+
+bootLogLossParent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentBinTest$scaredBinParent, 
+        predCols = predColsScaredBinParent,
+        metric = 'crossEntropy')
+
+
+# auc (SCARED/KSADS)
+bootAucKsads = boots(numBoots = nBoots, trueOutcome = hbnKsadsTest$ksadsBin, 
+        predCols = predColsKsads,
+        metric = 'auc')
+
+bootAucChild = boots(numBoots = nBoots, trueOutcome = hbnScaredChildBinTest$scaredBinChild, 
+        predCols = predColsScaredBinChild,
+        metric = 'auc')
+
+bootAucParent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentBinTest$scaredBinParent, 
+        predCols = predColsScaredBinParent,
+        metric = 'auc')
+
+
+# Label who the reporter is
+bootQ2Child$reporter = 'Child'
+bootQ2Parent$reporter = 'Parent'
+bootRMSEChild$reporter = 'Child'
+bootRMSEParent$reporter = 'Parent'
+bootLogLossChild$reporter = 'Child'
+bootAucChild$reporter = 'Child'
+bootLogLossParent$reporter = 'Parent'
+bootAucParent$reporter = 'Parent'
+```
+
+## Aggregate bootstraps to long form and summaries
+
+```{r}
+bootQ2Long = rbind(bootQ2Child, bootQ2Parent) %>%
+  tidyr::gather(., key = 'model', value = 'q2', -index, -reporter) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+
+bootRMSELong = rbind(bootRMSEChild, bootRMSEParent) %>%
+  tidyr::gather(., key = 'model', value = 'RMSE', -index, -reporter) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+
+bootLogLossKsadsLong = bootLogLossKsads %>%
+  tidyr::gather(., key = 'model', value = 'logLoss', -index) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+bootAucKsadsLong = bootAucKsads %>%
+  tidyr::gather(., key = 'model', value = 'auc', -index) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+# pull together child/parent auc/log loss info for logistic models on SCARED
+aucParentChildBinComplete = rbind(bootAucChild, bootAucParent) %>%  
+  tidyr::gather(., key = 'model', value = 'auc', -index, -reporter) 
+
+
+logLossParentChildBinComplete = rbind(bootLogLossChild, bootLogLossParent) %>%  
+  tidyr::gather(., key = 'model', value = 'logLoss', -index, -reporter)
+
+# Compile validation summary for binary outcomes for child/parent SCARED
+validationSummary3NNParentChildBinComplete = left_join(aucParentChildBinComplete, logLossParentChildBinComplete) %>%
+  tidyr::gather(., key = 'metric', value = 'score', -index, -reporter, -model) %>%
+  group_by(reporter, model, metric) %>%
+  summarise(lwr95 = quantile(score, .025),
+            upr95 = quantile(score, .975),
+            median = median(score),
+            lwr80 = quantile(score, .1),
+            upr80 = quantile(score, .9))
+
+# summary for q2 outcome
+bootQ2Summary = bootQ2Long %>%
+  group_by(reporter, model) %>%
+  summarise(lwr95 = quantile(q2, .025),
+            upr95 = quantile(q2, .975),
+            median = median(q2),
+            lwr80 = quantile(q2, .1),
+            upr80 = quantile(q2, .9))
+
+# summary for rmse outcome
+validationSummary3NNRMSE = bootRMSELong %>%
+  group_by(reporter, model) %>%
+  summarise(lwr95 = quantile(RMSE, .025),
+            upr95 = quantile(RMSE, .975),
+            median = median(RMSE),
+            lwr80 = quantile(RMSE, .1),
+            upr80 = quantile(RMSE, .9))
+
+# Take out intercept-only model for plotting flat violin of bootstraps
+bootQ2Long = dplyr::filter(bootQ2Long, model != 'Intercept Only')
+
+# summary for ksads log loss
+bootLogLossSummary = bootLogLossKsadsLong %>%
+  group_by(model) %>%
+  summarise(lwr95 = quantile(logLoss, .025),
+            upr95 = quantile(logLoss, .975),
+            median = median(logLoss),
+            lwr80 = quantile(logLoss, .1),
+            upr80 = quantile(logLoss, .9))
+
+# summary for ksads auc
+bootAucSummary = bootAucKsadsLong %>%
+  group_by(model) %>%
+  summarise(lwr95 = quantile(auc, .025),
+            upr95 = quantile(auc, .975),
+            median = median(auc),
+            lwr80 = quantile(auc, .1),
+            upr80 = quantile(auc, .9))
+```
+
+
+# Plots
+```{r}
+# reorder child/parent for plotting
+bootQ2Long = mutate(bootQ2Long, reporter = factor(reporter, levels = c('Parent', 'Child')))
+bootQ2Summary = bootQ2Summary %>%
+  ungroup() %>%
+  mutate(., reporter = factor(reporter, levels = c('Parent', 'Child')))
+permQ2Long = mutate(permQ2Long, reporter = factor(reporter, levels = c('Parent', 'Child')))
+
+
+# Plot of q2 outcomes for SCARED  
+bootPlotChildParent = ggplot(bootQ2Long, aes(color = model)) + 
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_errorbar(data = bootQ2Summary, aes(x = model, ymin = lwr95, ymax = upr95), width = .1, alpha = .7) +
+  geom_errorbar(data = bootQ2Summary, aes(x = model, ymin = lwr80, ymax = upr80), width = 0, lwd = 1, alpha = .7) +
+  geom_point(data = bootQ2Summary, aes(x = model, y = median)) +
+  geom_flat_violin(data = permQ2Long, aes(x = model, y = q2), position = position_nudge(x = .1, y = 0), color = 'grey', fill = 'grey', alpha = .7) +
+  geom_flat_violin(aes(x = model, y = q2, fill = model), position = position_nudge(x = .1, y = 0), alpha = .7) +
+  labs(title = 'A', subtitle = 'SCARED Child & Parent Report', y = bquote(~q^2), x = '') +
+  facet_grid(~reporter) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = myPal3) +
+  scale_color_manual(values = myPal4) +
+  scale_x_discrete(limits = c('GI Sum', 'GI Indiv. Items', 'No GI', 'Intercept Only'))
+
+
+bootPlotChildParent
+
+# plot of KSADS log loss
+bootPlotKsadsLogLoss = ggplot(bootLogLossKsadsLong, aes(color = model)) + 
+  geom_errorbar(data = bootLogLossSummary, aes(x = model, ymin = lwr95, ymax = upr95), width = .1) +
+  geom_errorbar(data = bootLogLossSummary, aes(x = model, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = bootLogLossSummary, aes(x = model, y = median)) +
+  geom_flat_violin(data = permLogLossLong, aes(x = model, y = logLoss), position = position_nudge(x = .1, y = 0), fill = 'grey', color = 'grey', alpha = .7) +
+  geom_flat_violin(aes(x = model, y = logLoss, fill = model), position = position_nudge(x = .1, y = 0), alpha = .7) +
+  labs(title = 'C', subtitle = 'Clinician Consensus', y = 'Log Loss', x = '') +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = myPal4) +
+  scale_color_manual(values = myPal4) +
+  scale_x_discrete(limits = c('GI Sum', 'GI Indiv. Items', 'No GI', 'Intercept Only'))
+
+# plot of KSADS AUC
+bootPlotKsadsAuc = ggplot(bootAucKsadsLong, aes(color = model)) + 
+  geom_hline(yintercept = .5, lty = 2) + 
+  geom_errorbar(data = bootAucSummary, aes(x = model, ymin = lwr95, ymax = upr95), width = .1) +
+  geom_errorbar(data = bootAucSummary, aes(x = model, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = bootAucSummary, aes(x = model, y = median)) +
+  geom_flat_violin(data = permAucLong, aes(x = model, y = auc), position = position_nudge(x = .1, y = 0), fill = 'grey', color = 'grey', alpha = .7) +
+  geom_flat_violin(aes(x = model, y = auc, fill = model), position = position_nudge(x = .1, y = 0), alpha = .7) +
+  labs(title = 'B', subtitle = 'Clinician Consensus', y = 'AUC', x = '') +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = myPal4) +
+  scale_color_manual(values = myPal4) +
+  scale_x_discrete(limits = c('GI Sum', 'GI Indiv. Items', 'No GI', 'Intercept Only'))
+
+
+bootPlotKsadsLogLoss
+bootPlotKsadsAuc
+```
+
+# ROC curve plots
+
+Generate ROC curves for each model, then format them all on the same plot
+```{r}
+rocSum <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$sumPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, boot.n=100000, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+rocIndiv <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$indivPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+rocNoGi <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$noGiPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+
+rocIntercept <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$interceptPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+# put all roc objects in a list
+rocList = list('GI Sum' = rocSum, 'GI Indiv. Items' = rocIndiv, 'No GI' = rocNoGi, 'Intercept Only' = rocIntercept)
+
+
+# use ggroc() function to plot ROC curves in ggplot!
+rocPlot = ggroc(rocList) +
+  geom_abline(intercept = 1, slope = 1, lty = 2) +
+  labs(title = 'D', subtitle = 'Clinician Consensus - ROC curves') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = 'right', legend.title = element_blank()) +
+  labs(x = 'Sensitivity', y = 'Specificity') +
+  scale_color_manual(values = myPal4_reorder, labels = c('GI Sum', 'GI Indiv. Items', 'Intercept Only', 'No GI'))
+  
+rocPlot
+```
+
+
+# Put it all together on one plot
+```{r}
+pdf('../plots/hbn3NNBootstrapPlotAllOutcomesWithIntercept.pdf', height = 4, width = 8)
+grid.arrange(bootPlotChildParent, bootPlotKsadsAuc, bootPlotKsadsLogLoss, rocPlot, layout_matrix = rbind(c(1,1,2,3), c(1,1,4, 4)))
+dev.off()
+```
+
+
+# Generate model validation summaries with  P values 
+
+## P values for Q2 metric
+
+```{r}
+# actual Q2 scores
+scaredChildQ2Sum = q2(hbnScaredChildTest$sumPreds, hbnScaredChildTest$scaredSumChild)
+scaredChildQ2Indiv = q2(hbnScaredChildTest$indivPreds, hbnScaredChildTest$scaredSumChild)
+scaredChildQ2NoGI = q2(hbnScaredChildTest$noGiPreds, hbnScaredChildTest$scaredSumChild)
+scaredChildQ2Intercept = q2(hbnScaredChildTest$interceptPreds, hbnScaredChildTest$scaredSumChild)
+scaredParentQ2Sum = q2(hbnScaredParentTest$sumPreds, hbnScaredParentTest$scaredSumParent)
+scaredParentQ2Indiv = q2(hbnScaredParentTest$indivPreds, hbnScaredParentTest$scaredSumParent)
+scaredParentQ2NoGI = q2(hbnScaredParentTest$noGiPreds, hbnScaredParentTest$scaredSumParent)
+scaredParentQ2Intercept = q2(hbnScaredParentTest$interceptPreds, hbnScaredParentTest$scaredSumParent)
+
+
+# null vectors
+nullQ2Child = permQ2Child$sum
+nullQ2Parent = permQ2Parent$sum
+
+# make new dataframe object for the Q2 validation summary
+validationSummary3NNQ2 = bootQ2Summary
+
+# Put Q2 p-values into validation summary dataframe
+
+# Child Q2 p-values
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Child' & validationSummary3NNQ2$model == 'GI Sum'] = 
+  (sum(nullQ2Child  > scaredChildQ2Sum)+1)/(length(nullQ2Child)+1)
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Child' & validationSummary3NNQ2$model == 'GI Indiv. Items'] = 
+  (sum(nullQ2Child  > scaredChildQ2Indiv)+1)/(length(nullQ2Child)+1)
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Child' & validationSummary3NNQ2$model == 'No GI'] = 
+  (sum(nullQ2Child  > scaredChildQ2NoGI)+1)/(length(nullQ2Child)+1)
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Child' & validationSummary3NNQ2$model == 'Intercept Only'] = 
+  (sum(nullQ2Child  > scaredChildQ2Intercept)+1)/(length(nullQ2Child)+1)
+
+## Parent Q2 p-values
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Parent' & validationSummary3NNQ2$model == 'GI Sum'] = 
+  (sum(nullQ2Parent  > scaredParentQ2Sum)+1)/(length(nullQ2Parent)+1)
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Parent' & validationSummary3NNQ2$model == 'GI Indiv. Items'] = 
+  (sum(nullQ2Parent  > scaredParentQ2Indiv)+1)/(length(nullQ2Parent)+1)
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Parent' & validationSummary3NNQ2$model == 'No GI'] = 
+  (sum(nullQ2Parent  > scaredParentQ2NoGI)+1)/(length(nullQ2Parent)+1)
+validationSummary3NNQ2$pValNull[validationSummary3NNQ2$reporter == 'Parent' & validationSummary3NNQ2$model == 'Intercept Only'] = 
+  (sum(nullQ2Parent  > scaredParentQ2Intercept)+1)/(length(nullQ2Parent)+1)
+
+# Q2 Compared to No GI Model
+validationSummary3NNQ2$pValNoGI[validationSummary3NNQ2$reporter == 'Child' & validationSummary3NNQ2$model == 'GI Sum']  = 
+  (sum(bootQ2Child$sum < bootQ2Child$noGi)+1)/(nrow(bootQ2Child)+1)
+validationSummary3NNQ2$pValNoGI[validationSummary3NNQ2$reporter == 'Child' & validationSummary3NNQ2$model == 'GI Indiv. Items'] = 
+  (sum(bootQ2Child$indiv < bootQ2Child$noGi)+1)/(nrow(bootQ2Child)+1)
+validationSummary3NNQ2$pValNoGI[validationSummary3NNQ2$reporter == 'Parent' & validationSummary3NNQ2$model == 'GI Sum']  = 
+  (sum(bootQ2Parent$sum < bootQ2Parent$noGi)+1)/(nrow(bootQ2Parent)+1)
+validationSummary3NNQ2$pValNoGI[validationSummary3NNQ2$reporter == 'Parent' & validationSummary3NNQ2$model == 'GI Indiv. Items'] = 
+  (sum(bootQ2Parent$indiv < bootQ2Parent$noGi)+1)/(nrow(bootQ2Parent)+1)
+
+validationSummary3NNQ2
+```
+
+AUC/Log Loss Validation Summaries with p-values (KSADS)
+```{r}
+validationSummary3NNAUC = bootAucSummary
+nullAUC = permAucKsads$sum
+
+# p-values over null
+validationSummary3NNAUC$pvalNull[validationSummary3NNAUC$model == 'GI Sum'] = 
+  (sum(nullAUC > validationSummary3NNAUC$median[validationSummary3NNAUC$model == 'GI Sum'])+1)/(length(nullAUC)+1)
+validationSummary3NNAUC$pvalNull[validationSummary3NNAUC$model == 'GI Indiv. Items'] = 
+  (sum(nullAUC > validationSummary3NNAUC$median[validationSummary3NNAUC$model == 'GI Indiv. Items'])+1)/(length(nullAUC)+1)
+validationSummary3NNAUC$pvalNull[validationSummary3NNAUC$model == 'No GI'] = 
+  (sum(nullAUC > validationSummary3NNAUC$median[validationSummary3NNAUC$model == 'No GI'])+1)/(length(nullAUC)+1)
+validationSummary3NNAUC$pvalNull[validationSummary3NNAUC$model == 'Intercept Only'] = 
+  (sum(nullAUC > validationSummary3NNAUC$median[validationSummary3NNAUC$model == 'Intercept Only'])+1)/(length(nullAUC)+1)
+
+# p-values over no GI
+validationSummary3NNAUC$pvalNoGi[validationSummary3NNAUC$model == 'GI Sum'] = 
+  (sum(bootAucKsads$sum < bootAucKsads$noGi)+1)/(nrow(bootAucKsads)+1)
+validationSummary3NNAUC$pvalNoGi[validationSummary3NNAUC$model == 'GI Indiv. Items'] = 
+  (sum(bootAucKsads$indiv < bootAucKsads$noGi)+1)/(nrow(bootAucKsads)+1)
+
+validationSummary3NNAUC
+```
+
+
+## Log loss summaries with p-values (KSADS)
+
+```{r}
+validationSummary3NNLogLoss = bootLogLossSummary
+nullLogLoss = permLogLossKsads$sum
+
+# p-values over null
+validationSummary3NNLogLoss$pvalNull[validationSummary3NNLogLoss$model == 'GI Sum'] = 
+  (sum(nullLogLoss < validationSummary3NNLogLoss$median[validationSummary3NNLogLoss$model == 'GI Sum']) + 1)/(length(nullLogLoss)+1)
+validationSummary3NNLogLoss$pvalNull[validationSummary3NNLogLoss$model == 'GI Indiv. Items'] = 
+  (sum(nullLogLoss < validationSummary3NNLogLoss$median[validationSummary3NNLogLoss$model == 'GI Indiv. Items'])+1)/(length(nullLogLoss)+1)
+validationSummary3NNLogLoss$pvalNull[validationSummary3NNLogLoss$model == 'No GI'] =
+  (sum(nullLogLoss < validationSummary3NNLogLoss$median[validationSummary3NNLogLoss$model == 'No GI']) + 1)/(length(nullLogLoss)+1)
+validationSummary3NNLogLoss$pvalNull[validationSummary3NNLogLoss$model == 'Intercept Only'] = 
+  (sum(nullLogLoss < validationSummary3NNLogLoss$median[validationSummary3NNLogLoss$model == 'Intercept Only'])+1)/(length(nullLogLoss)+1)
+
+
+# p-values over no GI
+validationSummary3NNLogLoss$pvalNoGi[validationSummary3NNLogLoss$model == 'GI Sum'] =
+  (sum(bootLogLossKsads$sum > bootLogLossKsads$noGi)+1)/(nrow(bootLogLossKsads)+1)
+validationSummary3NNLogLoss$pvalNoGi[validationSummary3NNLogLoss$model == 'GI Indiv. Items'] = 
+  (sum(bootLogLossKsads$indiv > bootLogLossKsads$noGi)+1)/(nrow(bootLogLossKsads) +1)
+
+
+validationSummary3NNLogLoss
+
+```
+
+# Save validation summary outputs for reporting
+```{r}
+save(validationSummary3NNQ2, validationSummary3NNAUC, validationSummary3NNLogLoss, validationSummary3NNRMSE, validationSummary3NNParentChildBinComplete, file = '../output/validationSummary3NN.rda')
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

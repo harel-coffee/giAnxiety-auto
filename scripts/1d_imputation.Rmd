@@ -1,0 +1,64 @@
+---
+title: "1d: Impute Missing HBN Data"
+author: "Paul A. Bloom"
+date: "June 21, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown imputes missing items in the HBN data using 3NN and 9NN imputation (resulting in 2 different imputed datasets). Anxiety variables are imputed separately from CBCL GI items in efforts to avoid introducing artificial dependence between predictors and outcomes. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Load pacakages
+```{r}
+library(tidyverse)
+library(VIM)
+source('helperFunctions.R')
+```
+
+## Load in HBN Training Set for Imputation
+```{r}
+hbnImpute = read.csv('../cleanData/hbnTrainForImpute.csv', stringsAsFactors = FALSE)
+
+# Take out binary variables
+dataForImputation = dplyr::select(hbnImpute, -scaredBinChild, -scaredBinParent, -cbclGISum)
+
+# Define variables from which to impute predictors and outcomes (respectively)
+imputationIV = dplyr::select(dataForImputation, -scaredSumChild, -scaredSumParent, -ksadsBin, -ageCenter)
+imputationDV = dplyr::select(dataForImputation, -nausea, -stomachache_cramps, -vomiting, -constipated)
+impVarsIV = names(imputationIV)[names(imputationIV) %in% c('age', 'sex')]
+impVarsDV = names(imputationDV)[!names(imputationDV) %in% c('Identifiers', 'scaredSumChild')]
+```
+
+## Impute all missing variables using 3 and 9 nearest neighbors
+
+  * Use the VIM package to impute the GI predictors and anxiety outcomes separately
+  * Then bind back together, calculate sum scores
+
+```{r}
+hbn3NNTrain =  kNN(imputationIV, k = 3, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsIV, addRandom = FALSE) %>%
+  left_join(., dplyr::select(kNN(imputationDV, k = 3, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsDV, addRandom = FALSE), -age), by = c('Identifiers', 'sex')) %>%
+  mutate(., scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0),
+         scaredBinParent = ifelse(scaredSumParent >= 25, 1, 0),
+         cbclGISum = stomachache_cramps + vomiting + constipated + nausea)
+
+hbn9NNTrain = kNN(imputationIV, k = 9, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsIV) %>%
+  left_join(., dplyr::select(kNN(imputationDV, k = 9, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsDV, addRandom = FALSE), -age), by = c('Identifiers', 'sex')) %>%
+  mutate(., scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0),
+         scaredBinParent = ifelse(scaredSumParent >= 25, 1, 0),
+         cbclGISum = stomachache_cramps + vomiting + constipated + nausea)
+
+write.csv(hbn3NNTrain, file = '../cleanData/hbnTrain3NN.csv', row.names = FALSE)
+write.csv(hbn9NNTrain, file = '../cleanData/hbnTrain9NN.csv', row.names = FALSE)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

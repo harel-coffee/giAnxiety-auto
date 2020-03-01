@@ -1,0 +1,333 @@
+---
+title: "2a: Replicating GI-Anxiety Associations Across Cohorts"
+author: "Paul A. Bloom"
+date: "June 21, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+
+This markdown runs the same linear/logistic regressions in the HBN (training data), LA, and NYC cohorts predicting SCARED-P from CBCL GI symptoms.
+
+## Load pacakages/Set themes
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(rstanarm)
+library(arm)
+library(gridExtra)
+source('helperFunctions.R')
+
+# Plot theme
+mytheme = theme_bw() 
+theme_set(mytheme)
+```
+
+# Load data 
+
+## Load in HBN Complete Case Training Set
+```{r}
+hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
+
+# Complete-cases analysis: filter out where SCARED-P is NA
+hbnCompleteTrainScaredParent = filter(hbnCompleteTrain, !is.na(scaredSumParent))
+
+# Recode sex
+hbnCompleteTrainScaredParent = mutate(hbnCompleteTrainScaredParent, 
+                                      sexOrig = ifelse(sex == 1, 'Female', 'Male'),
+                                      sexContrast = ifelse(sexOrig == 'Male', -.5, .5))
+
+# get mean age
+hbnFull = read.csv(file = '../cleanData/fullHBN.csv', stringsAsFactors = FALSE)
+meanAge = mean(hbnFull$age)
+```
+
+
+## Load in SB/ELFK Scared
+```{r}
+## Load in SB & ELFK Data
+sb = read.csv('../cleanData/sbDataClean.csv', stringsAsFactors = F) %>% mutate(., study = 'sb')
+elfk = read.csv('../cleanData/elfkDataClean.csv', stringsAsFactors = F) %>% mutate(., study = 'elfk')
+
+# Recode sex and name variables the same way as in HBN
+sb = mutate(sb, sexOrig = ifelse(Sex == 1, 'Female', 'Male'),
+            sexContrast = ifelse(sexOrig == 'Male', -.5, .5)) %>%
+  rename(age = bl_age_gi_new, cbclGISum = CBCL_GI_sum, scaredSumParent = sum_scared) %>%
+  mutate(ageCenter = age - meanAge)
+
+elfk = mutate(elfk, sexOrig = ifelse(Sex == 1, 'Female', 'Male'),
+            sexContrast = ifelse(sexOrig == 'Male', -.5, .5)) %>%
+  rename(age = bl_age_gi_new, cbclGISum = CBCL_GI_sum, scaredSumParent = sum_scared) %>%
+  mutate(ageCenter = age - meanAge)
+```
+
+
+# Linear Regresson on HBN Training Data
+```{r, results='hide'}
+hbnScaredPLinearReg = stan_glm(data = hbnCompleteTrainScaredParent, scaredSumParent ~ cbclGISum*sexContrast + ageCenter)
+```
+
+HBN Model Summary
+```{r}
+summary(hbnScaredPLinearReg)
+```
+# Define a data frame of predictor values for which to plot model predictions
+
+We'll use the same dataframe to get predictions for all cohorts
+
+  * GI symptoms - ranging from 1-8
+  * sexContrast = 0 --- represents the 'average' sex 
+  * ageCenter = 0 -- predictions for the mean age in the HBN cohort (`r meanAge`)
+```{r}
+predMatrix = expand.grid(cbclGISum = 0:8, sexContrast = c(0), ageCenter = c(0)) %>%
+  mutate(., ageBin= as.factor(ageCenter + meanAge))
+```
+
+## Pull HBN Model Predictions
+
+```{r}
+# Get predictions by extracting posterior draws of the linear predictor (posterior_linpred()), then get summary statistics from the posterior: median, and .025 and .975 quantiles, then put into dataframe
+scaredParentHBNPreds = posterior_linpred(hbnScaredPLinearReg, newdata = predMatrix)
+scaredParentHBNPreds = t(cbind(apply(scaredParentHBNPreds,2, quantile, c(.025, .5, .975)))) 
+scaredParentHBNPreds = data.frame(scaredParentHBNPreds) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'HBN')
+```
+## Fit the same linear regression to SB Data
+```{r, results='hide'}
+sbScaredLinearReg = stan_glm(data = sb, scaredSumParent ~ cbclGISum*sexContrast + ageCenter)
+```
+
+SB Model Summary
+```{r}
+summary(sbScaredLinearReg)
+```
+
+## Pull SB Model Predictions
+```{r}
+scaredParentSbLinearPreds = posterior_linpred(sbScaredLinearReg, newdata = predMatrix)
+scaredParentSbLinearPreds = t(cbind(apply(scaredParentSbLinearPreds,2, quantile, c(.025, .5, .975)))) 
+scaredParentSbLinearPreds = data.frame(scaredParentSbLinearPreds) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'LA')
+```
+
+## Fit the same linear regression to ELFK Data
+```{r, results='hide'}
+elfkScaredLinearReg = stan_glm(data = elfk, scaredSumParent ~ cbclGISum*sexContrast + ageCenter)
+```
+
+ELFK Model Summary
+```{r}
+summary(elfkScaredLinearReg)
+```
+
+## Pull ELFK Model Predictions
+```{r}
+elfkModelElfkPreds = posterior_linpred(elfkScaredLinearReg, newdata = predMatrix)
+elfkModelElfkPreds = t(cbind(apply(elfkModelElfkPreds,2, quantile, c(.025, .5, .975)))) 
+elfkModelElfkPreds = data.frame(elfkModelElfkPreds) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'NYC')
+```
+
+## Plot models from every dataset together!
+```{r}
+# bind predictions from all three models together
+all3Models = rbind(elfkModelElfkPreds, scaredParentSbLinearPreds, scaredParentHBNPreds)
+
+# Remove predictions for the LA/NYC cohorts for GI scores > 4 (no participants actually have scores above 4 in these datasets)
+all3Models = filter(all3Models, !(model == 'NYC' & cbclGISum > 4),
+                    !(model == 'LA' & cbclGISum > 4))
+
+# Plot predictions for each model for each cohort
+replicationPlot = ggplot(data = filter(all3Models, ageCenter == 0)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 25, lty = 2, lwd = 1) + 
+  geom_line(aes(x = cbclGISum, y = X50., group = model, color = model), lwd = 2) +
+  geom_ribbon(aes(x = cbclGISum, y = X50., ymin = X2.5., ymax = X97.5., group = model, fill = model), alpha= .3) +
+  scale_fill_brewer(palette = 'Set1') +
+  scale_color_brewer(palette = 'Set1') +
+  labs(x = "Sum of CBCL GI Symptoms", y = 'Parent Report Total SCARED Score', title = 'A') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.title = element_blank()) 
+
+replicationPlot
+```
+
+## Compare model posterior draws
+```{r}
+# pull posterior draws from each model
+hbnDraws = as.data.frame(hbnScaredPLinearReg)
+sbDraws = as.data.frame(sbScaredLinearReg)
+elfkDraws = as.data.frame(elfkScaredLinearReg)
+
+# label each dataset
+hbnDraws$dataset = 'HBN'
+sbDraws$dataset = 'LA'
+elfkDraws$dataset = 'NYC'
+
+# combine draws for models from each dataset
+allDraws = rbind(hbnDraws, sbDraws, elfkDraws)
+
+# Summarize posterior distributions for the GI sum predictor
+allDrawsSummary = allDraws %>%
+  group_by(dataset) %>%
+  summarise(estimate = median(cbclGISum),
+            lwr95 = quantile(cbclGISum, .025),
+            upr95 = quantile(cbclGISum, .975),
+            lwr80 = quantile(cbclGISum, .1),
+            upr80 = quantile(cbclGISum, .9))
+
+# plot posterior distribution summaries
+replicationParamsPlot = ggplot(allDraws, aes(x = dataset, y = cbclGISum)) +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_errorbar(data = allDrawsSummary, aes(y = estimate, ymin = lwr95, ymax = upr95), width = .05, lwd = .5) +
+  geom_errorbar(data = allDrawsSummary, aes(y = estimate, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = allDrawsSummary, aes(y = estimate)) +
+  geom_flat_violin(aes(fill = dataset), position = position_nudge(x = .1, y = 0)) +
+  scale_fill_brewer(palette = 'Set1') +
+  scale_color_brewer(palette = 'Set1') +
+  labs(x = "Cohort", y = 'Beta Estimate for GI Predictor', title = 'B') +
+  theme(text = element_text(face = 'bold'), 
+        legend.position = 'none') +
+  scale_x_discrete(limits = c('NYC', 'LA', 'HBN')) +
+  coord_flip()
+
+
+replicationParamsPlot
+```
+
+## Arrange plot of predictions + params together
+```{r}
+pdf('../plots/replicationCohortsPlot.pdf', width = 8, height = 4)
+grid.arrange(replicationPlot, replicationParamsPlot, ncol = 2, widths = c(1.5, 1))
+dev.off()
+```
+
+## Save models out
+```{r}
+save(sbScaredLinearReg, elfkScaredLinearReg, hbnScaredPLinearReg, file = '../output/linearModelsReplication.rda')
+```
+
+# Repeat process with logistic regressions
+
+## Run Logistic Regressions and Get Predictions
+```{r, results='hide'}
+# models for each dataset
+hbnScaredPLogisticReg = stan_glm(data = hbnCompleteTrainScaredParent, scaredBinParent ~ cbclGISum*sexContrast + ageCenter, family= binomial(link = 'logit'), cores = 4)
+sbScaredPLogisticReg = stan_glm(data = sb, scaredBin ~ cbclGISum*sexContrast + ageCenter, family= binomial(link = 'logit'), cores = 4)
+elfkScaredPLogisticReg = stan_glm(data = elfk, scaredBin ~ cbclGISum*sexContrast + ageCenter, family= binomial(link = 'logit'), cores = 4)
+
+# Model predictions for each dataset -- this time we use the invlogit() function to represent predictions as probabilities
+sbModelLogitPreds  = invlogit(posterior_linpred(sbScaredPLogisticReg, newdata = predMatrix))
+sbModelLogitPreds  = t(cbind(apply(sbModelLogitPreds ,2, quantile, c(.025, .5, .975)))) 
+sbModelLogitPreds  = data.frame(sbModelLogitPreds ) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'LA')
+
+elfkModelLogitPreds  = invlogit(posterior_linpred(elfkScaredPLogisticReg, newdata = predMatrix))
+elfkModelLogitPreds  = t(cbind(apply(elfkModelLogitPreds ,2, quantile, c(.025, .5, .975)))) 
+elfkModelLogitPreds  = data.frame(elfkModelLogitPreds ) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'NYC')
+
+hbnModelLogitPreds  = invlogit(posterior_linpred(hbnScaredPLogisticReg, newdata = predMatrix))
+hbnModelLogitPreds  = t(cbind(apply(hbnModelLogitPreds ,2, quantile, c(.025, .5, .975)))) 
+hbnModelLogitPreds  = data.frame(hbnModelLogitPreds ) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'HBN')
+```
+
+## Bind predictions from all datasets together, filter out predictions where there is no data for SB/ELFK
+```{r}
+allLogitPreds = rbind(sbModelLogitPreds, elfkModelLogitPreds, hbnModelLogitPreds) %>%
+  dplyr::filter(., !(cbclGISum > 4 & model != 'HBN'))
+
+# plot
+replicationPlotLogistic = ggplot(data = allLogitPreds) +
+  geom_line(aes(x = cbclGISum, y = X50., group = model, color = model), lwd = 2) +
+  geom_ribbon(aes(x = cbclGISum, y = X50., ymin = X2.5., ymax = X97.5., group = model, fill = model), alpha= .3) +
+  scale_fill_brewer(palette = 'Set1') +
+  scale_color_brewer(palette = 'Set1') +
+  labs(x = "Sum of CBCL GI Symptoms", y = 'P(Meet SCARED-P Clinical Cutoff)') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.title = element_blank()) 
+
+replicationPlotLogistic
+```
+
+## Posterior distributions for GI predictor in logistic regressions
+```{r}
+# pull posterior draws from each model
+hbnDrawsLogistic = as.data.frame(hbnScaredPLogisticReg)
+sbDrawsLogistic = as.data.frame(sbScaredPLogisticReg)
+elfkDrawsLogistic = as.data.frame(elfkScaredPLogisticReg)
+
+# label each dataset
+hbnDrawsLogistic$dataset = 'HBN'
+sbDrawsLogistic$dataset = 'LA'
+elfkDrawsLogistic$dataset = 'NYC'
+
+# combine draws for models from each dataset
+allDrawsLogistic = rbind(hbnDrawsLogistic, sbDrawsLogistic, elfkDrawsLogistic)
+
+# Summarize posterior distributions for the GI sum predictor
+
+allDrawsSummaryLogistic = allDrawsLogistic %>%
+  group_by(dataset) %>%
+  summarise(estimate = median(cbclGISum),
+            lwr95 = quantile(cbclGISum, .025),
+            upr95 = quantile(cbclGISum, .975),
+            lwr80 = quantile(cbclGISum, .1),
+            upr80 = quantile(cbclGISum, .9))
+
+# plot posterior distribution summaries
+replicationParamsLogisticPlot = ggplot(allDrawsLogistic, aes(x = dataset, y = cbclGISum)) +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_errorbar(data = allDrawsSummaryLogistic, aes(y = estimate, ymin = lwr95, ymax = upr95), width = .05, lwd = .5) +
+  geom_errorbar(data = allDrawsSummaryLogistic, aes(y = estimate, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = allDrawsSummaryLogistic, aes(y = estimate)) +
+  geom_flat_violin(aes(fill = dataset), position = position_nudge(x = .1, y = 0)) +
+  scale_fill_brewer(palette = 'Set1') +
+  scale_color_brewer(palette = 'Set1') +
+  labs(x = "Cohort", y = 'Beta Estimate for GI Predictor') +
+  theme(text = element_text(face = 'bold'), 
+        legend.position = 'none') +
+  scale_x_discrete(limits = c('NYC', 'LA', 'HBN')) +
+  coord_flip()
+
+
+replicationParamsLogisticPlot
+```
+
+## Arrange plot of predictions + params together for logistic
+```{r}
+pdf('../plots/replicationCohortsLogisticPlot.pdf', width = 8, height = 4)
+grid.arrange(replicationPlotLogistic, replicationParamsLogisticPlot, ncol = 2, widths = c(1.5, 1))
+dev.off()
+```
+
+## Save logit models out
+```{r}
+save(sbScaredPLogisticReg, elfkScaredPLogisticReg, hbnScaredPLogisticReg, file = '../output/logisticModelsReplication.rda')
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```
+
+
+

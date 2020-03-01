@@ -1,0 +1,361 @@
+---
+title: "6: Compare Validation Summaries Across Metrics, Pipelines, Outcomes and Holdout Sets"
+author: "Paul A. Bloom"
+date: "January 23, 2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown creates plots visualizing model validation performance across metrics, pipelines, outcomes, and holdout sets. It generates one plot for performance on the HBN holdout data and one for performance on the SB + ELFK combined data.
+
+  * Metrics: Q2, RMSE, Log Loss, AUC
+  * Pipelines: Complete Cases, 3NN, 9NN
+  * Outcomes: SCARED-P (continuous/binary), SCARED-C (continuous/binary), KSADS (binary)
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+theme_set(theme_bw())
+```
+
+# Load HBN holdout validation summaries
+```{r}
+load('../output/validationSummary3NN.rda')
+load('../output/validationSummary9NN.rda')
+load('../output/validationSummaryCompleteCases.rda')
+```
+
+# Clean HBN validation summaries
+
+## SCARED Binary Outcomes (log loss / auc)
+
+Rename models and pipelines here in each summary dataframe
+```{r}
+validationSummaryParentChildBinComplete = validationSummaryParentChildBinComplete %>%
+  ungroup() %>%
+  mutate(., 
+         model = case_when(
+          model == 'sum' ~ 'GI Sum',
+          model == 'indiv' ~ 'GI Indiv. Items',
+          model == 'noGi' ~ 'No GI',
+          model == 'intercept' ~ 'Intercept Only'
+        ),
+        Pipeline = 'Complete Cases')
+
+validationSummary3NNParentChildBinComplete = validationSummary3NNParentChildBinComplete %>%
+  ungroup() %>%
+  mutate(., 
+         model = case_when(
+          model == 'sum' ~ 'GI Sum',
+          model == 'indiv' ~ 'GI Indiv. Items',
+          model == 'noGi' ~ 'No GI',
+          model == 'intercept' ~ 'Intercept Only'
+        ),
+        Pipeline = '3NN Imputation')
+
+
+validationSummary9NNParentChildBinComplete = validationSummary9NNParentChildBinComplete %>%
+  ungroup() %>%
+  mutate(., 
+         model = case_when(
+          model == 'sum' ~ 'GI Sum',
+          model == 'indiv' ~ 'GI Indiv. Items',
+          model == 'noGi' ~ 'No GI',
+          model == 'intercept' ~ 'Intercept Only'
+        ),
+        Pipeline = '9NN Imputation')
+```
+
+
+## SCARED Q2 summaries
+
+Label with pipeline, metric, holdout set
+```{r}
+validationSummaryQ2 =  validationSummaryQ2 %>%
+  mutate(., Pipeline = 'Complete Cases', `Holdout Set` = 'HBN Holdout', Metric = 'Q2')
+
+validationSummary3NNQ2 =  validationSummary3NNQ2 %>%
+  mutate(., Pipeline = '3NN Imputation', `Holdout Set` = 'HBN Holdout', Metric = 'Q2')
+
+validationSummary9NNQ2 =  validationSummary9NNQ2 %>%
+  mutate(., Pipeline = '9NN Imputation', `Holdout Set` = 'HBN Holdout', Metric = 'Q2')
+
+# Pull all q2 metrics together across pipelines
+allQ2 = plyr::rbind.fill(validationSummaryQ2, validationSummary3NNQ2, validationSummary9NNQ2)
+
+# order factor for reporter
+allQ2= mutate(allQ2, reporter = factor(reporter, levels = c('Parent', 'Child', 'Clinician Consensus')))
+```
+
+## RMSE summaries 
+```{r}
+validationSummaryRMSECompleteCases$Pipeline = 'Complete Cases'
+validationSummary3NNRMSE$Pipeline = '3NN Imputation'
+validationSummary9NNRMSE$Pipeline = '9NN Imputation'
+
+# pull rmse summaries together across pipelines
+allRMSE = rbind(validationSummaryRMSECompleteCases, validationSummary3NNRMSE, validationSummary9NNRMSE) %>%
+  ungroup()
+
+# reorder factor for reporter
+allRMSE= mutate(allRMSE, reporter = factor(reporter, levels = c('Parent', 'Child', 'Clinician Consensus')))
+
+```
+
+## AUC summaries 
+
+```{r}
+# Clean KSADS AUC summaries
+validationSummaryAUC =  validationSummaryAUC %>%
+  mutate(., Pipeline = 'Complete Cases', 
+         `Holdout Set` = 'HBN Holdout', 
+         Metric = 'AUC', 
+         reporter = 'Clinician Consensus')
+
+validationSummary3NNAUC =  validationSummary3NNAUC %>%
+  mutate(., Pipeline = '3NN Imputation',
+         `Holdout Set` = 'HBN Holdout', 
+         Metric = 'AUC', 
+         reporter = 'Clinician Consensus')
+
+validationSummary9NNAUC =  validationSummary9NNAUC %>%
+  mutate(., Pipeline = '9NN Imputation', 
+         `Holdout Set` = 'HBN Holdout', 
+         Metric = 'AUC', 
+         reporter = 'Clinician Consensus')
+
+# Pull AUC summaries together across outcomes and pipelines 
+allAUC = plyr::rbind.fill(validationSummaryAUC, validationSummary3NNAUC, validationSummary9NNAUC,
+                          data.frame(dplyr::filter(validationSummaryParentChildBinComplete, metric == 'auc')),
+                          data.frame(dplyr::filter(validationSummary3NNParentChildBinComplete, metric == 'auc')),
+                          data.frame(dplyr::filter(validationSummary9NNParentChildBinComplete, metric == 'auc')))
+
+allAUC= mutate(allAUC, reporter = factor(reporter, levels = c('Parent', 'Child', 'Clinician Consensus')))
+```
+
+## Log Loss Summaries
+```{r}
+validationSummaryLogLoss =  validationSummaryLogLoss %>%
+  mutate(., Pipeline = 'Complete Cases', `Holdout Set` = 'HBN Holdout', 
+         Metric = 'Log Loss', reporter = 'Clinician Consensus')
+
+validationSummary3NNLogLoss =  validationSummary3NNLogLoss %>%
+  mutate(., Pipeline = '3NN Imputation', `Holdout Set` = 'HBN Holdout', 
+         Metric = 'Log Loss', reporter = 'Clinician Consensus')
+
+validationSummary9NNLogLoss =  validationSummary9NNLogLoss %>%
+  mutate(., Pipeline = '9NN Imputation', `Holdout Set` = 'HBN Holdout', 
+         Metric = 'Log Loss', reporter = 'Clinician Consensus')
+
+# Pull log loss summaries together across pipelines and for child/parent
+allLogLoss = plyr::rbind.fill(validationSummaryLogLoss, 
+                              validationSummary3NNLogLoss, 
+                              validationSummary9NNLogLoss,
+                              data.frame(dplyr::filter(validationSummaryParentChildBinComplete, metric == 'logLoss')),
+                              data.frame(dplyr::filter(validationSummary3NNParentChildBinComplete,metric == 'logLoss')),
+                              data.frame(dplyr::filter(validationSummary9NNParentChildBinComplete, metric == 'logLoss')))
+
+# rename reporter
+allLogLoss = mutate(allLogLoss, reporter = factor(reporter, levels = c('Parent', 'Child', 'Clinician Consensus')))
+```
+
+# Plot summaries of each metric
+```{r}
+# Q2 for SCARED-P and SCARED-C
+q2plot = ggplot(allQ2, aes(x = model, y = median, color = Pipeline)) +
+  facet_grid(~reporter, drop = TRUE, space = 'free') +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15)) +
+  labs(y = bquote(~q^2), x = '', title = 'A', subtitle = 'Continuous Anxiety Symptoms')
+
+# RMSE for SCARED-P and SCARED-C
+rmsePlot =  ggplot(allRMSE, aes(x = model, y = median, color = Pipeline)) +
+  facet_grid(~reporter, drop = TRUE, space = 'free') +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15),legend.position = 'none') +
+  labs(y = 'RMSE', x = '', title = 'B', subtitle = 'Continuous Anxiety Symptoms')
+
+rmsePlot
+
+# AUC for all outcomes 
+aucPlot = ggplot(allAUC, aes(x = model, y = median, color = Pipeline)) +
+  facet_grid(~reporter) +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15), 
+        legend.position = 'none') +
+  labs(y = 'AUC', x = '', title = 'C', subtitle = 'Clinical Cutoff / Diagnoses')
+
+aucPlot
+
+# Log loss for all outcomes
+logLossPlot = ggplot(allLogLoss, aes(x = model, y = median, color = Pipeline)) +
+  facet_grid(~reporter) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15), 
+        legend.position = 'none') +
+  labs(y = 'Log Loss', x = '', title = 'D', subtitle = 'Clinical Cutoff / Diagnoses')
+
+
+logLossPlot
+
+
+```
+
+## Multipanel plot summarizing validation results across pipelines, metrics, and outcomes on HBN holdout data
+
+```{r}
+pdf('../plots/suppValidationComparison.pdf', height = 10, width = 8)
+grid.arrange(q2plot, rmsePlot, aucPlot, logLossPlot, layout_matrix = rbind(c(1,1), c(2,2), c(3,3), c(4,4)))
+dev.off()
+```
+
+# SB / ELFK validation summaries
+
+SCARED-P only for SB/ELFK
+
+```{r}
+# load in summaries
+load('../output/validationSummarySbElfkCompleteCases.rda')
+load('../output/validationSummarySbElfk3NN.rda')
+load('../output/validationSummarySbElfk9NN.rda')
+```
+
+
+# Clean summaries
+
+Label which pipeline they come from 
+```{r}
+# q2
+validationSummarySbElfkQ2 =  validationSummarySbElfkQ2 %>%
+  mutate(., Pipeline = 'Complete Cases')
+
+validationSummary3NNSbElfkQ2=  validationSummary3NNSbElfkQ2 %>%
+  mutate(., Pipeline = '3NN Imputation')
+
+validationSummary9NNSbElfkQ2=  validationSummary9NNSbElfkQ2 %>%
+  mutate(., Pipeline = '9NN Imputation')
+
+# rmse
+validationSummarySbElfkRMSE =  validationSummarySbElfkRMSE %>%
+  mutate(., Pipeline = 'Complete Cases')
+
+validationSummary3NNSbElfkRMSE=  validationSummary3NNSbElfkRMSE %>%
+  mutate(., Pipeline = '3NN Imputation')
+
+validationSummary9NNSbElfkRMSE=  validationSummary9NNSbElfkRMSE %>%
+  mutate(., Pipeline = '9NN Imputation')
+
+# AUC
+validationSummarySbElfkAUC =  validationSummarySbElfkAUC %>%
+  mutate(., Pipeline = 'Complete Cases')
+
+validationSummary3NNSbElfkAUC=  validationSummary3NNSbElfkAUC %>%
+  mutate(., Pipeline = '3NN Imputation')
+
+validationSummary9NNSbElfkAUC=  validationSummary9NNSbElfkAUC %>%
+  mutate(., Pipeline = '9NN Imputation')
+
+# Log loss
+validationSummarySbElfkLogLoss =  validationSummarySbElfkLogLoss %>%
+  mutate(., Pipeline = 'Complete Cases')
+
+validationSummary3NNSbElfkLogLoss=  validationSummary3NNSbElfkLogLoss %>%
+  mutate(., Pipeline = '3NN Imputation')
+
+validationSummary9NNSbElfkLogLoss=  validationSummary9NNSbElfkLogLoss %>%
+  mutate(., Pipeline = '9NN Imputation')
+
+```
+
+## For each outcome, bind together across pipelines
+
+```{r}
+sbelfkQ2 = rbind(validationSummarySbElfkQ2, validationSummary3NNSbElfkQ2, validationSummary9NNSbElfkQ2)
+sbelfkRMSE = rbind(validationSummarySbElfkRMSE, validationSummary3NNSbElfkRMSE, validationSummary9NNSbElfkRMSE)
+sbelfkAUC = rbind(validationSummarySbElfkAUC, validationSummary3NNSbElfkAUC, validationSummary9NNSbElfkAUC)
+sbelfkLogLoss = rbind(validationSummarySbElfkLogLoss, validationSummary3NNSbElfkLogLoss, validationSummary9NNSbElfkLogLoss)
+
+```
+
+## SB/ELFK plots for each outcome
+```{r}
+# Q2
+q2sbelfk = ggplot(sbelfkQ2, aes(x = model, y = median, color = Pipeline)) +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) 
+
+# pull out legend to put it at the bottom of the plot
+legend = get_legend(q2sbelfk + 
+                      theme(legend.position = "bottom", 
+                            legend.justification="center", 
+                            legend.title = element_blank()))
+
+# reomve legend specifically from Q2 plot (legend will be at the bottom of multipanel plot instead)
+q2sbelfk = q2sbelfk +  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15), 
+        legend.position = 'none') +
+  labs(y = bquote(~q^2), x = '', title = 'A', subtitle = 'Continuous Anxiety Symptoms')
+
+# Q2
+RMSEsbelfk = ggplot(sbelfkRMSE, aes(x = model, y = median, color = Pipeline)) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15), 
+        legend.position = 'none') +
+  labs(y = 'RMSE', x = '', title = 'B', subtitle = 'Continuous Anxiety Symptoms')
+
+# AUC
+AUCsbelfk = ggplot(sbelfkAUC, aes(x = model, y = median, color = Pipeline)) +
+  geom_hline(yintercept = 0.5, lty = 2) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15),
+        legend.position = 'none') +
+  labs(y = 'AUC', x = '', title = 'C', subtitle = 'Clinical Cutoff')
+
+
+# Log Loss
+LogLosssbelfk = ggplot(sbelfkLogLoss, aes(x = model, y = median, color = Pipeline)) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15),
+        legend.position = 'none') +
+  labs(y = 'Log Loss', x = '', title = 'D', subtitle = 'Clinical Cutoff')
+
+q2sbelfk
+RMSEsbelfk
+AUCsbelfk
+LogLosssbelfk
+```
+
+## Multipanel SB + ELFK validation plot
+```{r}
+sbelfkValGrid = plot_grid(q2sbelfk,RMSEsbelfk, AUCsbelfk, LogLosssbelfk, legend, ncol = 2, rel_heights = c(1,1,.1))
+save_plot(sbelfkValGrid, file = '../plots/suppValidationComparisonSB_ELFK.pdf', base_height = 8, base_width = 8)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

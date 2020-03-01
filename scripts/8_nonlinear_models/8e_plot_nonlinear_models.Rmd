@@ -1,0 +1,97 @@
+---
+title: "8e: Plot Nonlinear Modeling Comparison"
+author: "Paul A. Bloom"
+date: "January 23, 2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown generates plots based on the comparison of linear/nonlinear models for predicting anxiety in the HBN cohort.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(cowplot)
+theme_set(theme_bw())
+source('../helperFunctions.R')
+```
+
+# Pull nonlinear model performance outcomes
+
+## Classification
+```{r}
+# parent classification
+clfScaredP = read.csv('../../output/nonlinearClassificationScaredP.csv', stringsAsFactors = FALSE) %>%
+  dplyr::select(., 'Random Forest' = forestTestF1, 'SVM' = svmTestF1, 'Logistic Regression' = logTestF1, 'Ensemble' = voterTestF1, outcome, type) %>%
+  tidyr::gather(., key = 'Model', value = 'F1', -outcome, -type)
+
+# child
+clfScaredC = read.csv('../../output/nonlinearClassificationScaredC.csv', stringsAsFactors = FALSE) %>%
+  dplyr::select(., 'Random Forest' = forestTestF1, 'SVM' = svmTestF1, 'Logistic Regression' = logTestF1, 'Ensemble' = voterTestF1, outcome, type) %>%
+  tidyr::gather(., key = 'Model', value = 'F1', -outcome, -type)
+
+# ksads
+clfKsads = read.csv('../../output/nonlinearClassificationKsads.csv', stringsAsFactors = FALSE) %>%
+  dplyr::select(., 'Random Forest' = forestTestF1, 'SVM' = svmTestF1, 'Logistic Regression' = logTestF1, 'Ensemble' = voterTestF1, outcome, type) %>%
+  tidyr::gather(., key = 'Model', value = 'F1', -outcome, -type)
+
+# combine for child/parent
+clfScared = rbind(clfScaredC, clfScaredP, clfKsads) %>%
+  mutate(., reporter = factor(outcome, levels = c('SCARED-P', 'SCARED-C', 'Ksads')))
+
+nonLinearClassification = ggplot(clfScared, aes(x = Model, y = F1, color = Model, fill = Model)) +
+  facet_grid(~reporter) +
+  geom_jitter(width = .02, alpha = .2, size = .5) +
+  geom_flat_violin(position = position_nudge(y = 0, x = .2), alpha = .3) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_nudge(y = 0, x = .3)) +
+  labs(x = 'Model Type', y = 'F1 Score') +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle=45, hjust = 1)) +
+  scale_fill_brewer(palette = 'Set2') +
+  scale_color_brewer(palette = 'Set2')
+
+ggsave(nonLinearClassification, file ='../../plots/suppNonlinearClassification.pdf', height = 4, width = 8)
+```
+
+
+
+## Regression
+```{r}
+# parent
+regScaredP = read.csv('../../output/nonlinearRegressionScaredP.csv', stringsAsFactors = FALSE) %>%
+  dplyr::select(., 'Random Forest' = forestTestR2, 'SVR' = svrTestR2, 'Ridge' = ridgeTestR2, 'Ensemble' = voterTestR2, outcome, type) %>%
+  tidyr::gather(., key = 'Model', value = 'q2', -outcome, -type)
+
+#child
+regScaredC = read.csv('../../output/nonlinearRegressionScaredC.csv', stringsAsFactors = FALSE) %>%
+  dplyr::select(., 'Random Forest' = forestTestR2, 'SVR' = svrTestR2, 'Ridge' = ridgeTestR2, 'Ensemble' = voterTestR2, outcome, type) %>%
+  tidyr::gather(., key = 'Model', value = 'q2', -outcome, -type)
+
+# Combine child/parent
+regScared = rbind(regScaredC, regScaredP) %>%
+  mutate(., reporter = factor(outcome, levels = c('SCARED-P', 'SCARED-C')))
+
+# Plot!
+nonLinearRegression = ggplot(regScared, aes(x = Model, y = q2, color = Model, fill = Model)) +
+  geom_hline(yintercept = 0, lty = 2) +
+  facet_grid(~reporter) +
+  geom_jitter(width = .02, alpha = .2) +
+  geom_flat_violin(position = position_nudge(y = 0, x = .2), alpha = .3) +
+  stat_summary(fun.data = 'mean_cl_boot', position = position_nudge(y = 0, x = .3)) +
+  labs(x = 'Model Type', y = bquote(~q^2)) +
+  theme(legend.position = 'none') +
+  scale_fill_brewer(palette = 1, type = 'div') +
+  scale_color_brewer(palette = 1, type = 'div')
+
+ggsave(nonLinearRegression, file ='../../plots/suppNonlinearRegression.pdf', height = 4, width = 8)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

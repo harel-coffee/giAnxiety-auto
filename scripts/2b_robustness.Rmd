@@ -1,0 +1,282 @@
+---
+title: "2b: Examining Robustness of GI-Anxiety Associations to Child Anxiety Informat"
+author: "Paul A. Bloom"
+date: "June 21, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown runs models in parallel predicting SCARED-P, SCARED-C, and KSADS from CBCL GI items in the HBN training data. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Load pacakages/Set themes
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(rstanarm)
+library(arm)
+library(gridExtra)
+source('helperFunctions.R')
+
+# Plot theme
+mytheme = theme_bw() 
+theme_set(mytheme)
+```
+
+## Load in HBN Complete Case Training Set
+
+```{r}
+hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
+
+# Recode sex
+hbnCompleteTrain= mutate(hbnCompleteTrain,
+                                      sexOrig = ifelse(sex == 1, 'Female', 'Male'),
+                                      sexContrast = ifelse(sexOrig == 'Male', -.5, .5))
+
+# For modeling each respective outcome, filter out NAs
+hbnCompleteTrainScaredParent= filter(hbnCompleteTrain, !is.na(scaredSumParent))
+hbnCompleteTrainScaredChild= filter(hbnCompleteTrain, !is.na(scaredSumChild))
+hbnCompleteTrainKsads = filter(hbnCompleteTrain, !is.na(ksadsBin))
+
+
+# get mean age
+hbnFull = read.csv(file = '../cleanData/fullHBN.csv', stringsAsFactors = FALSE)
+meanAge = mean(hbnFull$age)
+```
+
+# Models for scared child and ksads
+```{r,results='hide'}
+hbnReplicationScaredChildModel = stan_glm(data = hbnCompleteTrainScaredChild, scaredSumChild ~ cbclGISum*sexContrast + ageCenter)
+summary(hbnReplicationScaredChildModel)
+
+hbnReplicationKsadsModel = stan_glm(data = hbnCompleteTrainKsads, ksadsBin ~ cbclGISum*sexContrast + ageCenter,
+                                    family = binomial(link = 'logit'))
+```
+
+## Summarize models
+```{r}
+summary(hbnReplicationScaredChildModel)
+summary(hbnReplicationKsadsModel)
+```
+
+# Define prediction data frame
+```{r}
+predMatrix = expand.grid(cbclGISum = 0:8, sexContrast = c(0), ageCenter = c(0)) %>%
+  mutate(., ageBin= as.factor(ageCenter + meanAge))
+```
+
+## SCARED-C predictions and plot
+
+```{r}
+# Get predictions by extracting posterior draws of the linear predictor
+scaredChildHBNPreds = posterior_linpred(hbnReplicationScaredChildModel, newdata = predMatrix)
+scaredChildHBNPreds = t(cbind(apply(scaredChildHBNPreds,2, quantile, c(.025, .5, .975)))) 
+scaredChildHBNPreds = data.frame(scaredChildHBNPreds) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'HBN')
+
+ChildScaredContHBN = hbnCompleteTrainScaredChild %>%
+  ggplot(data = ., aes(x = cbclGISum,y = scaredSumChild)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 25, lty = 2, lwd = 1) + 
+  geom_jitter(width = .1, height = 0, alpha = .2, size = 1) +
+  geom_line(data = scaredChildHBNPreds, aes(x = cbclGISum,y = X50., color = model), lwd = 1, show.legend = FALSE) +
+  geom_ribbon(data = scaredChildHBNPreds, aes(x = cbclGISum, y = X50.,ymin = X2.5., ymax = X97.5., fill = model), alpha= .3) +
+  scale_fill_brewer(palette = 'Set2') +
+  scale_color_brewer(palette = 'Set2') +
+  labs(x = "", y = 'Child Report Total SCARED Score', title = 'Child Report') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.position = 'none') +
+  ylim(0, 81)
+  
+ChildScaredContHBN
+```
+
+## KSADS Predictions and Plot
+```{r}
+hbnKsadsModelPreds = invlogit(posterior_linpred(hbnReplicationKsadsModel, newdata = predMatrix))
+hbnKsadsModelPreds = t(cbind(apply(hbnKsadsModelPreds,2, quantile, c(.025, .5, .975)))) 
+hbnKsadsModelPreds = data.frame(hbnKsadsModelPreds) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'KSADS')
+
+# A dataframe of KSADS raw data summaries  -- what proportion of participants at each level of GI score actually had anxiety diagnoses on KSADS
+actual = hbnCompleteTrainKsads %>%
+  group_by(cbclGISum) %>%
+  summarise(., propCutoff = sum(ksadsBin)/n(), n = n()) 
+
+ksadsPlot = hbnCompleteTrainKsads %>%
+  ggplot(data = ., aes(x = cbclGISum,y = ksadsBin)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = .5, lty = 3) +
+  geom_point(data = actual, aes(x = cbclGISum, y = propCutoff, size = n)) + 
+  geom_line(data = hbnKsadsModelPreds, aes(x = cbclGISum,y = X50., color = model), lwd = 2, show.legend = FALSE) + 
+  geom_ribbon(data = hbnKsadsModelPreds, aes(x = cbclGISum, y = X50.,ymin = X2.5., ymax = X97.5., fill = model), alpha= .3, show.legend = FALSE) +
+  ylim(0,1) +
+  labs(x = "", y = 'P(KSADS Diagnosis)', title = 'B\nClinician Consensus') +
+  scale_fill_brewer(palette = 'Set2') +
+  scale_color_brewer(palette = 'Set2') + 
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.title = element_blank()) 
+
+ksadsPlot
+```
+
+## Scared Parent Predictions and Plot
+```{r, echo = FALSE}
+# load the model object already run in the previous script
+load('../output/linearModelsReplication.rda')
+
+scaredParentHBNPreds = posterior_linpred(hbnScaredPLinearReg, newdata = predMatrix)
+scaredParentHBNPreds = t(cbind(apply(scaredParentHBNPreds,2, quantile, c(.025, .5, .975)))) 
+scaredParentHBNPreds = data.frame(scaredParentHBNPreds) %>%
+  cbind(predMatrix, .) %>%
+  mutate(., model = 'HBN')
+
+ParentScaredContHBN = hbnCompleteTrainScaredParent %>%
+  ggplot(data = ., aes(x = cbclGISum,y = scaredSumParent)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 25, lty = 2, lwd = 1) + 
+  geom_jitter(width = .1, height = 0, alpha = .2, size = 1) +
+  geom_line(data = scaredParentHBNPreds, aes(x = cbclGISum,y = X50.,
+                                             color = model), lwd = 1, show.legend = FALSE) +
+  geom_ribbon(data = scaredParentHBNPreds, aes(x = cbclGISum, y = X50.,ymin = X2.5., 
+                                               ymax = X97.5.,fill = model , alpha= .3)) +
+  scale_fill_brewer(palette = 'Set2') +
+  scale_color_brewer(palette = 'Set2') +
+  labs(x = "", y = 'Parent Report Total SCARED Score', title = 'Parent Report') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.position = 'none') +
+  ylim(0, 81)
+
+ParentScaredContHBN
+```
+
+## Parent + Child on one plot
+```{r}
+# Bind together predictions from both SCARED-P and SCARED-C
+scaredParentHBNPreds$reporter = 'SCARED-P'
+scaredChildHBNPreds$reporter = 'SCARED-C'
+scaredHBNAllPreds = rbind(scaredChildHBNPreds, scaredParentHBNPreds)
+
+
+# Reformat raw data for this as well
+hbnCompleteTrainLong = tidyr::gather(hbnCompleteTrain, key = 'reporter', value = 'score', 
+                                     scaredSumParent, scaredSumChild) %>%
+  mutate(., reporter = ifelse(reporter == 'scaredSumParent', 'SCARED-P', 'SCARED-C'))
+
+
+
+childParentPlot = hbnCompleteTrainLong %>%
+  ggplot(data = ., aes(x = cbclGISum,y = score)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = 25, lty = 2, lwd = 1) + 
+  geom_jitter(width = .1, height = 0, alpha = .2, size = 1, aes(color = reporter)) +
+  geom_line(data = scaredHBNAllPreds, aes(x = cbclGISum,y = X50.,
+                                             color = reporter), lwd = 1) +
+  geom_ribbon(data = scaredHBNAllPreds, aes(x = cbclGISum, y = X50.,ymin = X2.5., 
+                                               ymax = X97.5.,fill = reporter), alpha = .3) +
+  scale_fill_brewer(palette = 'Set2') +
+  scale_color_brewer(palette = 'Set2') +
+  labs(x = "", y = 'Total SCARED Score', title = 'A', subtitle = 'Parent & Child Report') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.title = element_blank()) +
+  ylim(0, 81)
+
+childParentPlot
+
+```
+
+## Alternative KSADS Plot
+
+```{r}
+ksadsPlotAlt = hbnCompleteTrainKsads %>%
+  ggplot(data = ., aes(x = cbclGISum,y = ksadsBin)) +
+  geom_hline(yintercept = 0) +
+  geom_hline(yintercept = .5, lty = 2) +
+  geom_point(data = actual, aes(x = cbclGISum, y = propCutoff, size = n)) + 
+  geom_line(data = hbnKsadsModelPreds, aes(x = cbclGISum,y = X50.), lwd = 1, show.legend = FALSE, color = 'purple2', alpha = .65) + 
+  geom_ribbon(data = hbnKsadsModelPreds, aes(x = cbclGISum, y = X50.,ymin = X2.5., ymax = X97.5.), alpha= .15, show.legend = FALSE, fill = 'purple2') +
+  ylim(0,1) +
+  labs(x = "", y = 'P(KSADS Diagnosis)', title = 'B', subtitle = 'Clinician Consensus') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        text = element_text(face = 'bold'),
+        legend.title = element_blank()) 
+
+ksadsPlotAlt
+```
+
+
+# Arranged plot option 1
+```{r}
+pdf('../plots/replicationMultiOutcomesPlot.pdf', width = 7, height = 4)
+grid.arrange(ParentScaredContHBN, ChildScaredContHBN, ksadsPlot, ncol = 3, widths = c(2,2,3), bottom = 'Sum of CBCL GI Symptoms')
+dev.off()
+```
+
+# Arranged plot option 2
+```{r}
+pdf('../plots/replicationMultiOutcomesPlotOption2.pdf', width = 7, height = 4)
+grid.arrange(childParentPlot, ksadsPlotAlt, ncol = 2, widths = c(4,3), bottom = 'Sum of CBCL GI Symptoms')
+dev.off()
+```
+
+
+# Save robusness models out
+
+```{r}
+save(hbnReplicationKsadsModel, hbnReplicationScaredChildModel, hbnScaredPLinearReg, file = '../output/hbnModelsRobustness.rda')
+```
+
+# Sex models
+
+Models here have sex as the sole predictor -- looking at associations between sex and the different anxiety outcomes irrespective of GI 
+```{r,results='hide'}
+scaredPgender = stan_glm(data = hbnCompleteTrainScaredParent, scaredSumParent ~ sex, cores = 4)
+scaredCgender = stan_glm(data = hbnCompleteTrainScaredChild, scaredSumChild ~ sex, cores = 4)
+ksadsgender = stan_glm(data = hbnCompleteTrainKsads, ksadsBin ~ sex, family = binomial(link = 'logit'), cores = 4)
+
+# save models out
+save(scaredPgender, scaredCgender, ksadsgender, file = '../output/genderModels.rda')
+```
+
+## Export predictions from KSADS model for the Shiny app beta
+```{r}
+# Grid of predictions for use in the shiny app
+shinyGrid = expand.grid(sexContrast = c(-.5, .5), ageCenter = -6:10, cbclGISum = 0:8) %>%
+  mutate(., ageBin = round(ageCenter + meanAge))
+
+# Get predictions for shiny app
+shinyPreds = invlogit(posterior_linpred(hbnReplicationKsadsModel, newdata = shinyGrid))
+shinyPreds = t(cbind(apply(shinyPreds,2, quantile, c(.025, .1, .5, .9, .975)))) 
+shinyPreds = data.frame(shinyPreds) %>%
+  cbind(shinyGrid, .) %>%
+  mutate(., sexOrig = ifelse(sexContrast == .5, 'Female', 'Male'))
+
+# Save out shiny app predictions
+save(shinyPreds, file = 'giShinyApp/data/shinyPreds.rda')
+```
+
+
+# Session Info
+```{r}
+sessionInfo()
+```
+
+
+

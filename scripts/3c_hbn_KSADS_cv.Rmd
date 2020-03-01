@@ -1,0 +1,287 @@
+---
+title: "3c: Cross-validate KSADS models on HBN training data"
+author: "Paul A. Bloom"
+date: "June 21, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown cross-validates KSADS models on the HBN training data (just ogistic regressions). Model metrics are saved for each fold of cv, then best models are selected and fit using Bayesian inference in rstanarm on the entire HBN training set, to be later inspected and validated.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Load pacakages/Set themes
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(rstanarm)
+library(arm)
+source('helperFunctions.R')
+source('cvFunction.R')
+
+# Plot theme
+mytheme = theme_bw() + theme(panel.grid.major = element_blank(), 
+                             axis.text=element_text(size=14),
+                             axis.title.x=element_text(size=14,face="bold"),
+                             axis.title.y=element_text(size=14, face="bold"),
+                             plot.title=element_text(size=20, hjust = 0.5))
+theme_set(mytheme)
+
+myPal = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
+```
+
+
+# Load in datasets
+
+```{r}
+# complete cases
+hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
+hbnCompleteTrainKsads = filter(hbnCompleteTrain, !is.na(ksadsBin)) %>%
+  mutate(., missingData = 'complete')
+
+# 3nn
+hbn3NNTrain = read.csv('../cleanData/hbnTrain3NN.csv', stringsAsFactors = FALSE) %>%
+  mutate(., missingData = '3NN')
+
+# 9nn
+hbn9NNTrain = read.csv('../cleanData/hbnTrain9NN.csv', stringsAsFactors = FALSE) %>%
+  mutate(., missingData = '9NN')
+
+```
+
+
+
+# Define logistic regression formulas
+
+```{r}
+sumFormulasKsads = list(ksadsBin ~ sex + ageCenter + cbclGISum, 
+                   ksadsBin ~ sex + ageCenter*cbclGISum,
+                   ksadsBin ~ sex*cbclGISum + ageCenter, 
+                   ksadsBin ~ cbclGISum*ageCenter*sex)
+
+indivFormulasKsads = list(ksadsBin ~ sex + ageCenter + nausea + stomachache_cramps + vomiting + constipated,
+                     ksadsBin ~ sex + nausea*ageCenter + stomachache_cramps*ageCenter + vomiting*ageCenter + constipated*ageCenter,
+                     ksadsBin ~ ageCenter + nausea*sex + stomachache_cramps*sex + vomiting*sex + constipated*sex,
+                     ksadsBin ~ nausea*sex*ageCenter + stomachache_cramps*sex*ageCenter + vomiting*sex*ageCenter + constipated*sex*ageCenter)
+
+
+noGiFormulasKsads = list(ksadsBin ~ ageCenter,
+                    ksadsBin ~ sex,
+                    ksadsBin ~ ageCenter + sex,
+                    ksadsBin ~ ageCenter*sex)
+
+interceptFormulaKsads = list(ksadsBin ~ 1)
+```
+
+# Run cross-val on each training set
+
+The cvManyLinearModels() function (sourced from cvFunction.R) is used to cross-validate all model variants for each pipeline here. This chunk may throw a parsing failures -- the parse_number() function in the cv function gets a little upset when it can't read 'ModIntScore' as a number, but it is actually fine.
+```{r}
+# number of rounds to run
+numRounds = 100
+
+# multiple training sets (complete cases, 3NN imputation, 9NN imputation)
+trainSets = list(hbnCompleteTrainKsads, hbn3NNTrain, hbn9NNTrain)
+
+# data frame to store results of cross-val with each training set
+cvKsadsOutputs = data.frame(index = 1:length(trainSets), trainSet = c('complete', '3NN', '9NN'))
+
+# Loop through and do CV on each training set (pipeline)
+for (ii in 1:length(trainSets)){
+  print(ii)
+  # select the training set
+  trainSet = trainSets[[ii]]
+  
+  # Run the crossval & save to dataframe
+  cvLogistic = cvManyLinearModels(inputData = trainSet, outcomeColumn = 'ksadsBin', 
+                                metric = crossEntropy, numFolds = 10, cvRounds = numRounds, modType = glm,
+                                sumFormulas = sumFormulasKsads, indivFormulas = indivFormulasKsads, 
+                                noGiFormulas = noGiFormulasKsads, interceptFormula = interceptFormulaKsads)
+  # order model formulations / variations within formulations for plotting
+  cvLogistic[[2]]$ModelSetOrdered = ordered(cvLogistic[[2]]$ModelSet, 
+                                              c('GI Sum Score', 'GI Indiv. Items', 'No GI Term', 'Intercept Only'))
+  
+  
+  cvLogistic[[2]]$model = ordered(cvLogistic[[2]]$model, 
+                                  c('No Interactions', 'Age*GI', 'Sex*GI', 'Age*Sex*GI', 'Age', 'Sex', 'Age + Sex', 'Age*Sex', 'Intercept Only'))
+
+  # Save cv object to output df
+  cvKsadsOutputs$cvLogistic[ii] = list(cvLogistic)
+  
+  # Make plot comparing cross-val distributions
+  hbnLogisticRegKsadsCV = ggplot(cvLogistic[[2]], aes(x = model, y = median)) +
+    geom_errorbar(aes(ymin = upr80, ymax = lwr80, color = ModelSet), width = 0, lwd = 1) +
+    geom_errorbar(aes(ymin = upr95, ymax = lwr95, color = ModelSet), width = .1) +
+    geom_point(size = 2) +
+    facet_grid(~ModelSetOrdered, scales = 'free_x') +
+    theme(axis.text.x = element_text(angle =45, hjust = 1),
+          legend.position = 'none',
+          plot.title = element_text(hjust = 0, size = 15)) +
+    labs(x = '', y = 'Log Loss') +
+    scale_color_manual(values = myPal)
+  
+  # Store info on which model is best, as well as direct comparisons
+  bestLogisticModelIndivResults = dplyr::select(cvLogistic[[1]], 
+                    sum = contains(paste0('Sum', as.character(cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Sum Score']))),
+                    indiv = contains(paste0('Indiv', as.character(cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Indiv. Items']))),
+                    noGi = contains(paste0('NoGI', as.character(cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'No GI Term']))),
+                    intercept = contains('Int'))
+  
+  # Model comparisions
+  sumOverNoGiLogistic = percentBetter(bestLogisticModelIndivResults$noGi, bestLogisticModelIndivResults$sum)
+  sumOverIntLogistic = percentBetter(bestLogisticModelIndivResults$intercept, bestLogisticModelIndivResults$sum)
+  indivOverIntLogistic = percentBetter(bestLogisticModelIndivResults$intercept, bestLogisticModelIndivResults$indiv)
+  indivOverNoGiLogistic = percentBetter(bestLogisticModelIndivResults$noGi, bestLogisticModelIndivResults$indiv)
+  indivOverSumLogistic = percentBetter(bestLogisticModelIndivResults$sum, bestLogisticModelIndivResults$indiv)
+  noGiOverIntLogistic = percentBetter(bestLogisticModelIndivResults$intercept, bestLogisticModelIndivResults$noGi)
+  
+  # Save model comparisons to output df
+  cvKsadsOutputs$modelComparisonsLogistic[ii] = list(list('sumOverNoGi' = sumOverNoGiLogistic, 'sumOverInt' = sumOverIntLogistic,
+                                                               'indivOverInt' = indivOverIntLogistic, 'indivOverNoGi' = indivOverNoGiLogistic,
+                                                               'indivOverSum' = indivOverSumLogistic, 'noGiOverInt' = noGiOverIntLogistic))  
+  
+  
+  # GI Sum vs. No GI
+  pSumNoGiLogistic = ggplot(bestLogisticModelIndivResults, aes(x = sum, y = noGi)) +
+  geom_hline(lty = 3, yintercept = 0) + 
+  geom_vline(lty = 3, xintercept = 0) + 
+  geom_point(alpha = .3) +
+  geom_abline(slope = 1, intercept = 0) +
+  ylim(.2, .8) + xlim(.2, .8) +
+  theme_classic() +
+  labs(x= 'GI Sum', y = 'No-GI', title = 'B') +
+  annotate("text", x = .6, y = .3, label = paste0('GI model better\n ', 100*sumOverNoGiLogistic, '% of folds'),
+           size = 2)
+  # GI Indiv. Items vs. No GI
+  pIndivNoGiLogistic = ggplot(bestLogisticModelIndivResults, aes(x = indiv, y = noGi)) +
+    geom_hline(lty = 3, yintercept = 0) + 
+    geom_vline(lty = 3, xintercept = 0) + 
+    geom_point(alpha = .3) +
+    geom_abline(slope = 1, intercept = 0) +
+    ylim(.2, .8) + xlim(.2, .8) +
+    theme_classic() +
+    labs(x= 'GI Indiv Items', y = 'No-GI', title = 'C') +
+    annotate("text", x = .6, y = .3, label = paste0('GI model better\n ', 100*indivOverNoGiLogistic, '% of folds'),
+             size = 2)
+  
+  # GI Sum vs. GI Indiv. Items
+  pSumIndivLogistic = ggplot(bestLogisticModelIndivResults, aes(y = sum, x = indiv)) +
+    geom_hline(lty = 3, yintercept = 0) + 
+    geom_vline(lty = 3, xintercept = 0) + 
+    geom_point(alpha = .3) +
+    geom_abline(slope = 1, intercept = 0) +
+    ylim(.2, .8) + xlim(.2, .8) +
+    theme_classic() +
+    labs(y= 'GI Sum', x = 'GI Indiv Items', title = 'D') +
+    annotate("text", x = .6, y = .3, label = paste0('Indiv. Items Better\n ', 100*indivOverSumLogistic, '% of folds'),
+             size = 2)
+  
+  # Put all plots together and save pdf
+  pdf(paste0('../plots/hbnLogisticRegKsadsCV_', trainSet$missingData[1], '.pdf'), height = 6, width = 8)
+  gridExtra::grid.arrange(hbnLogisticRegKsadsCV, pSumNoGiLogistic, pIndivNoGiLogistic, pSumIndivLogistic, 
+                          layout_matrix = rbind(c(1,1,1),c(2,3,4)))
+  dev.off()
+}
+
+
+# Save cross-val outputs
+save(cvKsadsOutputs, file = '../output/cvKsadsOutputs.rda', compress = TRUE)
+```
+
+# Fit best models in each group to the entire training set
+
+Fit full rstanarm models of the variations that performed best in cross-validation (best median model performance)
+
+```{r}
+# number of chains to use for each full bayesian model, and number of cores used to fit them
+nChains = 4
+nCores = 4
+```
+
+
+## COMPLETE
+
+```{r, results='hide'}
+# Logistic models for complete-cases pipeline
+cvLogistic = cvKsadsOutputs$cvLogistic[[1]]
+
+# Set up dataframe to hold model outputs
+completeKsadsLogisticModFrame = data.frame(index = 1:4, modType = c('Sum', 'Indiv', 'NoGi', 'Int'))
+
+# Pull corresponding formula for the best model from CV, fit using rstanarm::stan_glm()
+completeKsadsLogisticModFrame$modObject[1] = list(stan_glm(data = trainSets[[1]],
+                                         formula = sumFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Sum Score']]],
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+completeKsadsLogisticModFrame$modObject[2] = list(stan_glm(data = trainSets[[1]], 
+                                         formula = indivFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Indiv. Items']]],
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+completeKsadsLogisticModFrame$modObject[3] = list(stan_glm(data = trainSets[[1]],
+                                         formula = noGiFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'No GI Term']]], 
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+completeKsadsLogisticModFrame$modObject[4] =list(stan_glm(data = trainSets[[1]],
+                                         formula = interceptFormulaKsads[[1]], 
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+```
+
+## 3NN
+```{r, results='hide'}
+cvLogistic = cvKsadsOutputs$cvLogistic[[2]]
+threeNNKsadsLogisticModFrame = data.frame(index = 1:4, modType = c('Sum', 'Indiv', 'NoGi', 'Int'))
+
+threeNNKsadsLogisticModFrame$modObject[1] = list(stan_glm(data = trainSets[[2]],
+                                         formula = sumFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Sum Score']]],
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+threeNNKsadsLogisticModFrame$modObject[2] = list(stan_glm(data = trainSets[[2]], 
+                                         formula = indivFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Indiv. Items']]],
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+threeNNKsadsLogisticModFrame$modObject[3] = list(stan_glm(data = trainSets[[2]],
+                                         formula = noGiFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'No GI Term']]], 
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+threeNNKsadsLogisticModFrame$modObject[4] =list(stan_glm(data = trainSets[[2]],
+                                         formula = interceptFormulaKsads[[1]], 
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+```
+
+## 9NN
+```{r, results='hide'}
+cvLogistic = cvKsadsOutputs$cvLogistic[[3]]
+NineNNKsadsLogisticModFrame = data.frame(index = 1:4, modType = c('Sum', 'Indiv', 'NoGi', 'Int'))
+
+NineNNKsadsLogisticModFrame$modObject[1] = list(stan_glm(data = trainSets[[3]],
+                                         formula = sumFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Sum Score']]],
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+NineNNKsadsLogisticModFrame$modObject[2] = list(stan_glm(data = trainSets[[3]], 
+                                         formula = indivFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'GI Indiv. Items']]],
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+NineNNKsadsLogisticModFrame$modObject[3] = list(stan_glm(data = trainSets[[3]],
+                                         formula = noGiFormulasKsads[[cvLogistic[[3]]$modelNum[cvLogistic[[3]]$ModelSet == 'No GI Term']]], 
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+
+NineNNKsadsLogisticModFrame$modObject[4] =list(stan_glm(data = trainSets[[3]],
+                                         formula = interceptFormulaKsads[[1]], 
+                                         chains = nChains, cores = nCores, family = binomial(link = 'logit')))
+```
+
+# Save all models out
+```{r}
+save(completeKsadsLogisticModFrame, threeNNKsadsLogisticModFrame, NineNNKsadsLogisticModFrame,
+     file = '../output/KsadsModels.rda')
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,231 @@
+---
+title: "9: Analyses of based on age, sex, and eca"
+author: "Paul A. Bloom"
+date: "January 22, 2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown generates plots and models for our main predictors and outcomes (GI and anxiety) as a function of age, sex, and early caregiving adversity. These analyses are mostly for the supplemental.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(rstanarm)
+library(cowplot)
+source('../scripts/helperFunctions.R')
+myPal3 = c('#2b8cbe', '#88419d','#cb181d')
+
+# Plot theme
+mytheme = theme_bw() 
+theme_set(mytheme)
+```
+
+# Clean data from all three cohorts
+```{r ELFK & SB Samples, echo=FALSE, warning=FALSE, message=FALSE}
+allHbn = read.csv('../cleanData/fullHBN.csv')
+sb = read.csv('../cleanData/sbDataClean.csv', stringsAsFactors = FALSE)
+elfk = read.csv('../cleanData/elfkDataClean.csv', stringsAsFactors = FALSE)
+
+elfk = dplyr::select(elfk, -time1_scared_11removed_average)
+elfk$Cohort = 'NYC'
+sb$Cohort = 'LA'
+
+# Combine SB and elfk
+sbElfk = rbind(sb, elfk) %>%
+  dplyr::select(., scaredSumParent = sum_scared, id = SUBID, scaredBinParent = scaredBin, age = bl_age_gi_new, pi = International_adoption, Sex, cbclGISum = CBCL_GI_sum, nausea, stomachache_cramps, constipated, vomiting, Cohort)
+
+hbnDescrip = dplyr::select(allHbn, Sex = sex, id = Identifiers, everything()) %>%
+  mutate(., Cohort = 'HBN')
+
+# Combine all three datasets
+allDescrip = plyr::rbind.fill(hbnDescrip, sbElfk) %>%
+    dplyr::select(., Age = age, everything())
+```
+
+
+# Make histograms for GI/scaredP
+
+```{r}
+giHist = ggplot(allDescrip) + geom_histogram(aes(cbclGISum, fill = Cohort), bins = 9) +
+  facet_wrap('Cohort', scales = 'free_y') + 
+  scale_color_brewer(palette = 'Set1') +
+  scale_fill_brewer(palette = 'Set1') +
+  theme(legend.position = 'none') +
+  labs(x = '', title = 'A', subtitle = 'CBCL GI Sum Score', y = 'Count') +
+  scale_x_continuous(breaks = 0:8) +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+
+giHist
+
+scaredPHist = ggplot(allDescrip) + 
+  geom_histogram(aes(scaredSumParent, fill = Cohort), bins = 9) +
+  geom_vline(xintercept = 25, lty = 2) +
+  facet_wrap('Cohort', scales = 'free_y') + 
+  scale_color_brewer(palette = 'Set1') +
+  scale_fill_brewer(palette = 'Set1') +
+  theme(legend.position = 'none') +
+  labs(x = '', title = 'B', subtitle = 'Parent Report Total SCARED Score', y = 'Count') +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
+
+# combine and save
+histGrid = plot_grid(giHist, scaredPHist, ncol=1)
+save_plot(filename = '../plots/suppHistogramsScaredpGI.pdf', histGrid)
+```
+
+# Age plot
+
+```{r}
+ageCorsGI = ggplot(allDescrip, aes(x = Age, y = cbclGISum, color = Cohort)) +
+  stat_smooth(method = 'lm') +
+  stat_cor(method = 'spearman',  aes(label = paste(..r.label.., ..rr.label.., ..p.label.., sep = "~`,`~"))) +
+  scale_color_brewer(palette = 'Set1') +
+  scale_fill_brewer(palette = 'Set1') +
+  labs(y = 'CBCL GI Sum Score', subtitle ='Correlations between age and GI symptoms', title = 'A') +
+  theme(legend.position = 'none')
+
+ageCorsGI
+
+ageCorsScaredP = ggplot(allDescrip, aes(x = Age, y = scaredSumParent, color = Cohort)) +
+  geom_hline(yintercept = 25, lty = 2) +
+  stat_smooth(method = 'lm', aes(fill = Cohort), lwd = 1) +
+  stat_cor(method = 'spearman',  aes(label = paste(..r.label.., ..rr.label.., ..p.label.., sep = "~`,`~")),show.legend = FALSE) +
+  scale_color_brewer(palette = 'Set1') +
+  scale_fill_brewer(palette = 'Set1') +
+  labs(y = 'Parent Report Total SCARED Score', subtitle ='Correlations between age and SCARED-P', title = 'B')
+
+ageCorsScaredP
+
+# combine and save
+agePlot = plot_grid(ageCorsGI, ageCorsScaredP, ncol=2, align="h", rel_widths = c(1,1.4))
+save_plot(filename = '../plots/suppAgeCorsPlot.pdf', plot = agePlot, base_width = 8)
+```
+
+
+# Sex differences plots
+```{r}
+allDescrip= mutate(allDescrip, sexCode = ifelse(Sex == 0, 'Male', 'Female'),
+                   eca = ifelse(pi ==1,'ECA', 'Comparison'))
+
+sexGI = ggplot(allDescrip, aes(x = sexCode, y = cbclGISum, color = Cohort)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_wrap('Cohort') +
+  theme(panel.grid.minor = element_blank()) +
+  labs(x = '', y = 'CBCL GI Sum Score', title = 'A') +
+  scale_color_brewer(palette = 'Set1') +
+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+sexScaredP = ggplot(allDescrip, aes(x = sexCode, y = scaredSumParent, color = Cohort)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_wrap('Cohort') +
+  theme(panel.grid.minor = element_blank()) +
+  labs(x = '', y = 'Parent Report Total SCARED Score', title = 'B') +
+  scale_color_brewer(palette = 'Set1') +
+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+# combine and save
+sexPlot = plot_grid(sexGI, sexScaredP, ncol=2, align="h")
+save_plot(filename = '../plots/suppSexDifferencesPlot.pdf', plot = sexPlot, base_width = 8)
+```
+# Sex models
+```{r, results='hide'}
+# GI symptoms as a function of sex
+sexModGIElfk = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'NYC'), cbclGISum ~ Sex)
+sexModGISB = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'LA'), cbclGISum ~ Sex)
+sexModGIHBN = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'HBN'), cbclGISum ~ Sex)
+
+# SCARED-P as a function of sex
+sexModScaredPElfk = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'NYC'), scaredSumParent ~ Sex)
+sexModScaredPSB = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'LA'), scaredSumParent ~ Sex)
+sexModScaredPHBN = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'HBN'), scaredSumParent ~ Sex)
+
+save(sexModGIElfk, sexModGISB, sexModGIHBN, sexModScaredPElfk, sexModScaredPSB, sexModScaredPHBN, file = '../output/sexDifferencesModelsAcrossCohorts.rda')
+```
+
+# Sex plots for SCARED-C and KDSADS in HBN
+```{r}
+sexScaredC = ggplot(dplyr::filter(allDescrip, Cohort == 'HBN'), aes(x = sexCode, y = scaredSumChild, color = Cohort)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  theme(panel.grid.minor = element_blank()) +
+  labs(x = '', y = 'Child Report Total SCARED Score', title = 'C') +
+  scale_color_brewer(palette = 'Set1') +
+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap('Cohort') 
+
+# reformat data for ksads sex differences (proportion with diagnosis)
+sexKsads = dplyr::filter(allDescrip, Cohort == 'HBN', !is.na(ksadsBin)) %>%
+  group_by(sexCode) %>%
+  summarise(prop = sum(ksadsBin)/n(),
+            n = n(),
+            se = sqrt(prop*(1-prop)/n),
+            Cohort = Cohort[1])
+
+sexKsadsPlot = ggplot(sexKsads, aes(x = sexCode, y = prop, color = Cohort)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = prop - 2*se, ymax = prop+2*se), width = 0) +
+  scale_color_brewer(palette = 'Set1') +
+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(y = 'P(Ksads Diagnosis)', title = 'D', x = '') +
+  facet_wrap('Cohort') 
+
+
+sexKsadsPlot
+sexScaredC
+```
+
+## Save plots out as 1 big grid
+```{r}
+pdf('../plots/suppSexDifferencesChildClinician.pdf', width = 8, height = 4)
+gridExtra::grid.arrange(sexGI, sexScaredP, sexScaredC,sexKsadsPlot, ncol = 4, widths = c(1.7, 1.7, 1,1))
+dev.off()
+```
+
+# ECA Plots
+
+GI and anxiety symptoms as a function of ECA in LA/NYC cohorts
+
+```{r}
+ecaGI = ggplot(dplyr::filter(allDescrip, Cohort != 'HBN'), aes(x = eca, y = cbclGISum, color = Cohort)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_wrap('Cohort') +
+  theme(panel.grid.minor = element_blank()) +
+  labs(x = '', y = 'CBCL GI Sum Score', title = 'B', subtitle = 'GI symptoms') +
+  scale_color_manual(values = c('#377eb8','#4daf4a')) +
+  theme(legend.position = 'none')
+
+
+ecaScaredP = ggplot(dplyr::filter(allDescrip, Cohort != 'HBN'), aes(x = eca, y = scaredSumParent, color = Cohort)) +
+  stat_summary(fun.data = "mean_cl_boot") +
+  facet_wrap('Cohort') +
+  theme(panel.grid.minor = element_blank()) +
+  labs(x = '', y = 'Parent Report Total SCARED Score', title = 'B', subtitle = ' SCARED-P') +
+  scale_color_manual(values = c('#377eb8','#4daf4a')) +
+  theme(legend.position = 'none')
+
+
+# combine and save
+ecaPlot = plot_grid(ecaGI, ecaScaredP, ncol=2, align="h")
+save_plot(filename = '../plots/suppECAPlot.pdf', plot = ecaPlot, base_width = 8)
+```
+
+# ECA models
+```{r, results='hide'}
+ecaModGIElfk = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'NYC'), cbclGISum ~ eca)
+ecaModGISB = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'LA'), cbclGISum ~ eca)
+
+ecaModScaredPElfk = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'NYC'), scaredSumParent ~ eca)
+ecaModScaredPSB = stan_glm(data = dplyr::filter(allDescrip, Cohort == 'LA'), scaredSumParent ~ eca)
+
+# save out models
+save(ecaModGIElfk, ecaModGISB, ecaModScaredPElfk, ecaModScaredPSB, file = '../output/ecaDifferencesModelsAcrossCohorts.rda')
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

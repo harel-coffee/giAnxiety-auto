@@ -1,0 +1,479 @@
+---
+title: "5b: Validation of GI-anxiety models in NYC/LA data  -- 3NN pipeline"
+author: "Paul A. Bloom"
+date: "September 10, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown calculates validation performance metrics for GI-anxiety models trained on the HBN training data on the HBN holdout data using permutation and bootstrapping ONLY for the SCARED-P metric but for both linear/logistic models. 3NN pipeline.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+## Load pacakages/Set themes
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(rstanarm)
+library(pROC)
+library(gridExtra)
+
+# Plot theme
+mytheme = theme_bw() 
+theme_set(mytheme)
+
+# Source code for flat violin plots
+source('helperFunctions.R')
+
+# color palette
+myPal3 = c('#2b8cbe', '#88419d','#cb181d')
+myPal3_reorder = c('#88419d', '#2b8cbe','#cb181d')
+myPal4 = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
+myPal4_reorder = c('#88419d', '#2b8cbe', '#238b45','#cb181d')
+```
+
+# Number of iterations (will affect runtime)
+
+```{r}
+nPerms = 10000
+nBoots = 10000
+```
+
+## Load in SB/ELFK data for test sets
+```{r}
+sb = read.csv('../cleanData/sbDataClean.csv', stringsAsFactors = FALSE) 
+
+elfk = read.csv('../cleanData/elfkDataClean.csv', stringsAsFactors = FALSE) 
+
+# rename vars to match HBN
+sb = dplyr::select(sb, cbclGISum = CBCL_GI_sum, scaredSumParent = sum_scared, age = bl_age_gi_new, sex = Sex, nausea, stomachache_cramps, constipated, vomiting)
+sb$dataset = 'LA'
+elfk = dplyr::select(elfk, cbclGISum = CBCL_GI_sum, scaredSumParent = sum_scared, age = bl_age_gi_new, sex = Sex, nausea, stomachache_cramps, constipated, vomiting)
+elfk$dataset = 'NYC'
+
+# get mean age from HBN data
+meanAge = mean(read.csv('../cleanData/fullHBN.csv', stringsAsFactors = FALSE)$age)
+
+# bind sb and elfk together, get centered ages
+sbelfk = rbind(sb, elfk) %>%
+  mutate(., ageCenter = age - meanAge)
+```
+
+
+# Load model objects
+```{r}
+load('../output/scaredParentModels.rda')
+```
+
+
+# Make Predictions On Test Set
+
+Generate predictions for all models trained on the HBN training data
+```{r}
+# get binned SCARED-P
+sbelfk$scaredBinParent = ifelse(sbelfk$scaredSumParent >= 25, 1, 0)
+
+# write out cleaned sb/elfk data
+write.csv(sbelfk, file = '../cleanData/sb_elfk.csv', row.names = FALSE)
+
+# Make predictions (linear)
+sbelfk = makePreds(testData = sbelfk, modelsFrame = threeNNScaredParentLinearModFrame, modelType = 'linear')
+
+# Make predictions (logistic)
+sbelfkLogistic= makePreds(testData = dplyr::select(sbelfk, -contains('pred')), modelsFrame = threeNNScaredParentLogisticModFrame, modelType = 'logistic')
+```
+
+# Permutation tests
+
+Define columns to create null permuted distributions for (i.e. the model predictions)
+```{r}
+predColsScaredParent = list('sum' = sbelfk$sumPreds, 
+                           'indiv' = sbelfk$indivPreds,
+                           'noGi' = sbelfk$noGiPreds,
+                           'intercept' = sbelfk$interceptPreds)
+
+predColsScaredParentLogistic = list('sum' = sbelfkLogistic$sumPreds, 
+                           'indiv' = sbelfkLogistic$indivPreds,
+                           'noGi' = sbelfkLogistic$noGiPreds,
+                           'intercept' = sbelfkLogistic$interceptPreds)
+```
+
+# Run permutations for each metric for both linear/logistic
+
+```{r}
+permQ2Parent = permute(numPerms = nPerms, trueOutcome = sbelfk$scaredSumParent, 
+        predCols = predColsScaredParent,
+        metric = 'q2') %>%
+  bestPermute(., metric = 'q2')
+
+permAucParent = permute(numPerms = nPerms, trueOutcome = sbelfkLogistic$scaredBinParent, 
+        predCols = predColsScaredParentLogistic,
+        metric = 'auc') %>%
+  bestPermute(., metric = 'auc')
+
+permLogLossParent = permute(numPerms = nPerms, trueOutcome = sbelfkLogistic$scaredBinParent, 
+        predCols = predColsScaredParentLogistic,
+        metric = 'crossEntropy') %>%
+  bestPermute(., metric = 'crossEntropy')
+```
+
+## Aggregate summaries of permuted outcomes
+```{r}
+permQ2Long = permQ2Parent %>%
+  tidyr::gather(., key = 'model', value = 'q2', -index) %>%
+  mutate(., model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+permAucLong = permAucParent %>%
+  tidyr::gather(., key = 'model', value = 'auc', -index) %>%
+  mutate(., model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+permLogLossLong = permLogLossParent %>%
+  tidyr::gather(., key = 'model', value = 'logLoss', -index) %>%
+  mutate(., model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+```
+
+# Bootstrap
+
+  * Linear: q2 and RMSE
+  * Logistic: AUC and Log loss
+```{r}
+bootQ2Parent = boots(numBoots = nBoots, trueOutcome = sbelfk$scaredSumParent, 
+        predCols = predColsScaredParent,
+        metric = 'q2')
+
+bootRMSEParent = boots(numBoots = nBoots, trueOutcome = sbelfk$scaredSumParent, 
+        predCols = predColsScaredParent,
+        metric = 'rmse')
+
+bootAucParent = boots(numBoots = nBoots, trueOutcome = sbelfkLogistic$scaredBinParent, 
+        predCols = predColsScaredParentLogistic,
+        metric = 'auc')
+
+bootLogLossParent = boots(numBoots = nBoots, trueOutcome = sbelfkLogistic$scaredBinParent, 
+        predCols = predColsScaredParentLogistic,
+        metric = 'crossEntropy')
+```
+
+## Aggregate bootstraps for each performance metric to long form
+
+```{r}
+bootQ2Long = rbind(bootQ2Parent) %>%
+  tidyr::gather(., key = 'model', value = 'q2', -index) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+
+bootRMSELong = rbind(bootRMSEParent) %>%
+  tidyr::gather(., key = 'model', value = 'RMSE', -index) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+
+bootAucLong = rbind(bootAucParent) %>%
+  tidyr::gather(., key = 'model', value = 'auc', -index) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+
+bootLogLossLong = rbind(bootLogLossParent) %>%
+  tidyr::gather(., key = 'model', value = 'logLoss', -index) %>%
+  mutate(model = case_when(
+    model == 'sum' ~ 'GI Sum',
+    model == 'indiv' ~ 'GI Indiv. Items',
+    model == 'noGi' ~ 'No GI',
+    model == 'intercept' ~ 'Intercept Only'
+  ))
+```
+
+## Summaries of each performance metric distribution 
+
+```{r}
+bootQ2Summary = bootQ2Long %>%
+  group_by(model) %>%
+  summarise(lwr95 = quantile(q2, .025),
+            upr95 = quantile(q2, .975),
+            median = median(q2),
+            lwr80 = quantile(q2, .1),
+            upr80 = quantile(q2, .9))
+
+bootRMSESummary = bootRMSELong %>%
+  group_by(model) %>%
+  summarise(lwr95 = quantile(RMSE, .025),
+            upr95 = quantile(RMSE, .975),
+            median = median(RMSE),
+            lwr80 = quantile(RMSE, .1),
+            upr80 = quantile(RMSE, .9))
+
+bootAucSummary = bootAucLong %>%
+  group_by(model) %>%
+  summarise(lwr95 = quantile(auc, .025),
+            upr95 = quantile(auc, .975),
+            median = median(auc),
+            lwr80 = quantile(auc, .1),
+            upr80 = quantile(auc, .9))
+
+bootLogLossSummary = bootLogLossLong %>%
+  group_by(model) %>%
+  summarise(lwr95 = quantile(logLoss, .025),
+            upr95 = quantile(logLoss, .975),
+            median = median(logLoss),
+            lwr80 = quantile(logLoss, .1),
+            upr80 = quantile(logLoss, .9))
+
+```
+
+# Plot bootstrapped/permuted performance
+```{r}
+# Q2 for linear
+bootPlotSbelfkParent = ggplot(bootQ2Long, aes(color = model)) + 
+  geom_hline(yintercept = .0, lty = 2) + 
+  geom_errorbar(data = bootQ2Summary, aes(x = model, ymin = lwr95, ymax = upr95), width = .1) +
+  geom_errorbar(data = bootQ2Summary, aes(x = model, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = bootQ2Summary, aes(x = model, y = median)) +  
+  geom_flat_violin(data = permQ2Long, aes(x = model, y = q2), position = position_nudge(x = .1, y = 0), alpha = .7, fill = 'grey', color = 'grey') +
+  geom_flat_violin(aes(x = model, y = q2, fill = model), position = position_nudge(x = .1, y = 0), alpha = .7) +
+  labs(title = 'A', subtitle = 'SCARED Parent Report\nCombined LA + NYC cohorts', y = bquote(~q^2), x = '') +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = myPal4) +
+  scale_color_manual(values = myPal4) +
+  scale_x_discrete(limits = c('GI Sum', 'GI Indiv. Items', 'No GI', 'Intercept Only'))
+
+
+# AUC for logistic
+bootPlotSbelfkParentAuc = ggplot(bootAucLong, aes(color = model)) + 
+  geom_hline(yintercept = .5, lty = 2) + 
+  geom_errorbar(data = bootAucSummary, aes(x = model, ymin = lwr95, ymax = upr95), width = .1) +
+  geom_errorbar(data = bootAucSummary, aes(x = model, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = bootAucSummary, aes(x = model, y = median)) +  
+  geom_flat_violin(data = permAucLong, aes(x = model, y = auc), position = position_nudge(x = .1, y = 0), alpha = .7, color = 'grey', fill = 'grey') +
+  geom_flat_violin(aes(x = model, y = auc, fill = model), position = position_nudge(x = .1, y = 0), alpha = .7) +
+  labs(title = 'B', y = 'AUC', x = '') +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = myPal4) +
+  scale_color_manual(values = myPal4) +
+  scale_x_discrete(limits = c('GI Sum', 'GI Indiv. Items', 'No GI', 'Intercept Only'))
+
+# Log Loss for logistic
+bootPlotSbelfkParentLogLoss = ggplot(bootLogLossLong, aes(color = model)) + 
+  geom_errorbar(data = bootLogLossSummary, aes(x = model, ymin = lwr95, ymax = upr95), width = .1) +
+  geom_errorbar(data = bootLogLossSummary, aes(x = model, ymin = lwr80, ymax = upr80), width = 0, lwd = 1) +
+  geom_point(data = bootLogLossSummary, aes(x = model, y = median)) + 
+  geom_flat_violin(data = permLogLossLong, aes(x = model, y = logLoss), position = position_nudge(x = .1, y = 0), alpha = .7, color = 'grey', fill = 'grey') +
+  geom_flat_violin(aes(x = model, y = logLoss, fill = model), position = position_nudge(x = .1, y = 0), alpha = .7) +
+  labs(title = 'C', y = 'Log Loss', x = '') +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank()) +
+  scale_fill_manual(values = myPal4) +
+  scale_color_manual(values = myPal4) +
+  scale_x_discrete(limits = c('GI Sum', 'GI Indiv. Items', 'No GI', 'Intercept Only'))
+
+
+bootPlotSbelfkParentLogLoss
+bootPlotSbelfkParentAuc
+bootPlotSbelfkParent
+```
+
+# ROC plots
+
+```{r}
+rocSum <- roc(sbelfkLogistic$scaredBinParent, sbelfkLogistic$sumPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, boot.n=100000, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+rocIndiv <- roc(sbelfkLogistic$scaredBinParent,sbelfkLogistic$indivPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+rocNoGi <- roc(sbelfkLogistic$scaredBinParent,sbelfkLogistic$noGiPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+
+rocIntercept <- roc(sbelfkLogistic$scaredBinParent,sbelfkLogistic$interceptPreds,
+            smoothed = TRUE,
+            # arguments for ci
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            # arguments for plot
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+
+# pull roc plots for each model together
+rocList = list('GI Sum' = rocSum, 'GI Indiv. Items' = rocIndiv, 'No GI' = rocNoGi, 'Intercept Only' = rocIntercept)
+
+
+# plot all roc curves together in one ggplot
+rocPlot = ggroc(rocList) +
+  geom_abline(intercept = 1, slope = 1, lty = 2) +
+  labs(title = 'ROC') +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = 'right', legend.title = element_blank()) +
+  labs(x = 'Sensitivity', y = 'Specificity', title = 'D', subtitle = 'ROC curves') +
+  scale_color_manual(values = myPal4_reorder, labels = c('GI Sum', 'GI Indiv. Items', 'Intercept Only', 'No GI'))
+
+
+
+rocPlot
+```
+
+# Multipanel LA/NYC validation plot
+
+```{r}
+pdf('../plots/sbelfkHBNPreds3NNScaredBootstrap.pdf', height = 4, width = 8)
+grid.arrange(bootPlotSbelfkParent, bootPlotSbelfkParentAuc, bootPlotSbelfkParentLogLoss, rocPlot, layout_matrix = rbind(c(1,1,2,3), c(1,1, 4,4)))
+dev.off()
+
+```
+
+# Create validation summary for sb-elfk testing with p-values
+
+```{r}
+# actual Q2 scores
+scaredParentQ2Sum = q2(sbelfk$sumPreds, sbelfk$scaredSumParent)
+scaredParentQ2Indiv = q2(sbelfk$indivPreds, sbelfk$scaredSumParent)
+scaredParentQ2NoGI = q2(sbelfk$noGiPreds, sbelfk$scaredSumParent)
+scaredParentQ2Intercept = q2(sbelfk$interceptPreds, sbelfk$scaredSumParent)
+
+
+# null vectors
+nullQ2Parent = permQ2Parent$sum
+validationSummary3NNSbElfkQ2 = bootQ2Summary
+
+# Q2 p-values over null permuted distribution
+validationSummary3NNSbElfkQ2$pValNull[validationSummary3NNSbElfkQ2$model == 'GI Sum'] = 
+  (sum(nullQ2Parent  > scaredParentQ2Sum)+1)/(length(nullQ2Parent)+1)
+validationSummary3NNSbElfkQ2$pValNull[validationSummary3NNSbElfkQ2$model == 'GI Indiv. Items'] = 
+  (sum(nullQ2Parent  > scaredParentQ2Indiv)+1)/(length(nullQ2Parent)+1)
+validationSummary3NNSbElfkQ2$pValNull[validationSummary3NNSbElfkQ2$model == 'No GI'] = 
+  (sum(nullQ2Parent  > scaredParentQ2NoGI)+1)/((length(nullQ2Parent)+1)+1)
+validationSummary3NNSbElfkQ2$pValNull[validationSummary3NNSbElfkQ2$model == 'Intercept Only'] = 
+  (sum(nullQ2Parent  > scaredParentQ2Intercept)+1)/(length(nullQ2Parent)+1)
+
+# Q2 p-values for GI models vs. No-GI
+validationSummary3NNSbElfkQ2$pValNoGI[validationSummary3NNSbElfkQ2$model == 'GI Sum']  = 
+  (sum(bootQ2Parent$sum < bootQ2Parent$noGi)+1)/(nrow(bootQ2Parent)+1)
+validationSummary3NNSbElfkQ2$pValNoGI[validationSummary3NNSbElfkQ2$model == 'GI Indiv. Items'] = 
+  (sum(bootQ2Parent$indiv < bootQ2Parent$noGi)+1)/(nrow(bootQ2Parent)+1)
+
+validationSummary3NNSbElfkQ2
+```
+
+AUC Validation Summary
+```{r}
+validationSummary3NNSbElfkAUC = bootAucSummary
+
+# null vector
+nullAUC = permAucParent$sum
+
+# p-values over null
+validationSummary3NNSbElfkAUC$pvalNull[validationSummary3NNSbElfkAUC$model == 'GI Sum'] = 
+  (sum(nullAUC > validationSummary3NNSbElfkAUC$median[validationSummary3NNSbElfkAUC$model == 'GI Sum'])+1)/(length(nullAUC)+1)
+validationSummary3NNSbElfkAUC$pvalNull[validationSummary3NNSbElfkAUC$model == 'GI Indiv. Items'] = 
+  (sum(nullAUC > validationSummary3NNSbElfkAUC$median[validationSummary3NNSbElfkAUC$model == 'GI Indiv. Items'])+1)/(length(nullAUC)+1)
+validationSummary3NNSbElfkAUC$pvalNull[validationSummary3NNSbElfkAUC$model == 'No GI'] = 
+ (sum(nullAUC > validationSummary3NNSbElfkAUC$median[validationSummary3NNSbElfkAUC$model == 'No GI'])+1)/(length(nullAUC)+1)
+validationSummary3NNSbElfkAUC$pvalNull[validationSummary3NNSbElfkAUC$model == 'Intercept Only'] = 
+  (sum(nullAUC > validationSummary3NNSbElfkAUC$median[validationSummary3NNSbElfkAUC$model == 'Intercept Only'])+1)/(length(nullAUC)+1)
+
+# p-values of no-GI over GI models (no gi did better here)
+validationSummary3NNSbElfkAUC$pvalNoGi[validationSummary3NNSbElfkAUC$model == 'GI Sum'] = 
+  (sum(bootAucParent$sum > bootAucParent$noGi)+1)/(nrow(bootAucParent)+1)
+validationSummary3NNSbElfkAUC$pvalNoGi[validationSummary3NNSbElfkAUC$model == 'GI Indiv. Items'] = 
+  (sum(bootAucParent$indiv > bootAucParent$noGi)+1)/(nrow(bootAucParent)+1)
+
+validationSummary3NNSbElfkAUC
+```
+
+Log Loss Validation Summary
+
+```{r}
+validationSummary3NNSbElfkLogLoss = bootLogLossSummary
+
+# null vector
+nullLogLoss = permLogLossParent$sum
+
+
+# p-values over null
+validationSummary3NNSbElfkLogLoss$pvalNull[validationSummary3NNSbElfkLogLoss$model == 'GI Sum'] = 
+  (sum(nullLogLoss < validationSummary3NNSbElfkLogLoss$median[validationSummary3NNSbElfkLogLoss$model == 'GI Sum'])+1)/(length(nullLogLoss) +1)
+validationSummary3NNSbElfkLogLoss$pvalNull[validationSummary3NNSbElfkLogLoss$model == 'GI Indiv. Items'] = 
+  (sum(nullLogLoss < validationSummary3NNSbElfkLogLoss$median[validationSummary3NNSbElfkLogLoss$model == 'GI Indiv. Items'])+1)/(length(nullLogLoss) +1)
+validationSummary3NNSbElfkLogLoss$pvalNull[validationSummary3NNSbElfkLogLoss$model == 'No GI'] = 
+  (sum(nullLogLoss < validationSummary3NNSbElfkLogLoss$median[validationSummary3NNSbElfkLogLoss$model == 'No GI'])+1)/(length(nullLogLoss) +1)
+validationSummary3NNSbElfkLogLoss$pvalNull[validationSummary3NNSbElfkLogLoss$model == 'Intercept Only'] = 
+  (sum(nullLogLoss < validationSummary3NNSbElfkLogLoss$median[validationSummary3NNSbElfkLogLoss$model == 'Intercept Only'])+1)/(length(nullLogLoss) +1)
+
+
+# p-values over no GI
+validationSummary3NNSbElfkLogLoss$pvalNoGi[validationSummary3NNSbElfkLogLoss$model == 'GI Sum'] = 
+  (sum(bootLogLossParent$sum > bootLogLossParent$noGi)+1)/(nrow(bootLogLossParent)+1)
+validationSummary3NNSbElfkLogLoss$pvalNoGi[validationSummary3NNSbElfkLogLoss$model == 'GI Indiv. Items'] = 
+  (sum(bootLogLossParent$indiv > bootLogLossParent$noGi)+1)/(nrow(bootLogLossParent)+1)
+
+
+validationSummary3NNSbElfkLogLoss
+
+```
+
+# Save validation summary outputs for reporting
+```{r}
+validationSummary3NNSbElfkRMSE = bootRMSESummary
+save(validationSummary3NNSbElfkQ2, validationSummary3NNSbElfkAUC, validationSummary3NNSbElfkLogLoss, validationSummary3NNSbElfkRMSE, file = '../output/validationSummarySbElfk3NN.rda')
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

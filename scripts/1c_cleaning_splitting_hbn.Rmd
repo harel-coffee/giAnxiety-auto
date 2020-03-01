@@ -1,0 +1,275 @@
+---
+title: "1c: HBN Data Cleaning and Splitting"
+author: "Paul A. Bloom"
+date: "April 22, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown cleans HBN data for the CBCL + SCARED and demographics, and also pulls in KSADS data previously cleaned for putting all together for analysis. The cleaning includes KNN imputation of missing survey items for participant with partial survey data, but NOT imputation of total measure scores for participants completely missing a measure. This markdown also splits the HBN data into a training set and test set
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Tidyverse
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(caret)
+library(VIM)
+source('helperFunctions.R')
+theme_set(theme_bw())
+```
+
+## Import Raw HBN Dataset
+```{r}
+raw = read.csv('../rawData/hbnRawData.csv', stringsAsFactors = FALSE)
+
+# Make a key with just ID, age, and sex
+# Sex: 0 = male, 1 = female
+justId = dplyr::select(raw, Identifiers, age = Basic_Demos.Age, sex = Basic_Demos.Sex) %>%
+  mutate(., age = as.numeric(age))
+
+```
+
+## Clean CBCL items
+
+We have to be careful here because some of the items are differently numbered in the preschool version (marked by 'pre' in the variable name) of the CBCL. A few participants have data on both the preschool and regular version of the CBCL, so we only use the preschool version if the regular version is missing. 
+```{r}
+# Select variables -- both preschool and older kid version of it
+cbclItems = dplyr::select(raw, Identifiers, age = Basic_Demos.Age, 
+                          nausea = CBCL.CBCL_56C, 
+                          stomachache_cramps = CBCL.CBCL_56F, 
+                          vomiting = CBCL.CBCL_56G, 
+                          constipated = CBCL.CBCL_49, 
+                          nauseaPre = CBCL_Pre.CBCLpre_45, 
+                          stomachache_crampsPre = CBCL_Pre.CBCLpre_78, 
+                          vomitingPre = CBCL_Pre.CBCLpre_93, 
+                          constipatedPre = CBCL_Pre.CBCLpre_12) %>%
+  mutate(., age = as.numeric(age))
+
+
+# Kids < 6 tend to have preschool version but not regular.
+# If the preschool version data is present, and regular is missing fill in the items with that one
+# Then get rid of extra preschool items
+# Get summed score
+cbclItems = mutate(cbclItems, 
+                   nausea = as.numeric(ifelse((nausea == '.' & nauseaPre != '.'), 
+                                              nauseaPre, nausea)),
+                   stomachache_cramps = as.numeric(ifelse((stomachache_cramps == '.' & stomachache_crampsPre != '.'), 
+                                                          stomachache_crampsPre, stomachache_cramps)),
+                   vomiting = as.numeric(ifelse((vomiting == '.' & vomitingPre != '.'), 
+                                                vomitingPre, vomiting)),
+                   constipated = as.numeric(ifelse((constipated == '.' & constipatedPre != '.'), 
+                                                   constipatedPre, constipated))) %>%
+  dplyr::select(-contains('Pre')) %>%
+  mutate(., cbclGISum = nausea + stomachache_cramps + vomiting + constipated)
+
+# only complete data
+cbclComplete = cbclItems[complete.cases(cbclItems),] %>%
+  filter(., 
+         nausea != '.', 
+         stomachache_cramps != '.',
+         vomiting != '.',
+         constipated != '.',
+         nausea != '', 
+         stomachache_cramps != '',
+         vomiting != '',
+         constipated != '')
+```
+
+## Clean scared parent items
+```{r}
+# select SCARED-P items
+scaredParent = dplyr::select(raw, Identifiers,contains('SCARED_P.SCARED_P_'), 
+                             -SCARED_P.SCARED_P_Total, 
+                             -SCARED_P.SCARED_P_SP, 
+                             -SCARED_P.SCARED_P_SH, 
+                             -SCARED_P.SCARED_P_SC, 
+                             -SCARED_P.SCARED_P_PN, 
+                             -SCARED_P.SCARED_P_GD,
+                             -SCARED_P.SCARED_P_11)
+
+# Store participant identifiers temporarily 
+idTemp = scaredParent$Identifiers
+
+# remove ID variable, then make all data numeric (numbers are represented as strings in the raw data)
+# Missing data represented with '.' -- will get turned to NA here
+scaredParent = dplyr::select(scaredParent, -Identifiers) %>%
+  mutate_if(., is.character, as.numeric) 
+
+# put IDs back in
+scaredParent$Identifiers = idTemp
+
+# Impute scared parent scores with partially complete data
+scaredParentNotComplete = scaredParent
+
+# see how many items each person is missing
+scaredParentNotComplete$numMissing = rowSums(is.na(scaredParent))
+
+# variables to use for imputation
+impVarsParent = names(scaredParentNotComplete)[1:40]
+
+# impute missing items for people missing only some items (5-NN imputation)
+scaredParentPartial = dplyr::filter(scaredParentNotComplete, numMissing < 40) %>%
+  VIM::kNN(., k = 5, numFun = median, catFun = maxCat, imp_var = TRUE, dist_var = impVarsParent, addRandom = FALSE) 
+
+# Save back into scaredParent (removing indicator varibales indicating for which participants imputation happened)
+scaredParent = dplyr::select(scaredParentPartial, -contains('imp'))
+
+# Get total SCARED-P sum score for each participant, take only complete cases, create binary indicator based on clinical cutoff threshold of >= 25, and remove item-level variables
+scaredParent = mutate(scaredParent, scaredSumParent = rowSums(scaredParent[1:40], na.rm = TRUE)) %>%
+  filter(complete.cases(.)) %>%
+  mutate(., scaredBinParent = ifelse(scaredSumParent >= 25, 1, 0)) %>%
+  dplyr::select(., Identifiers, scaredSumParent, scaredBinParent)
+```
+
+## Clean scared child items
+
+The process is basically the same here as with SCARED-P
+```{r}
+# select SCARED-C items
+scaredChild = dplyr::select(raw, Identifiers,contains('SCARED_SR.SCARED_SR_'), 
+                             -SCARED_SR.SCARED_SR_Total, 
+                             -SCARED_SR.SCARED_SR_SP, 
+                             -SCARED_SR.SCARED_SR_SH, 
+                             -SCARED_SR.SCARED_SR_SC, 
+                             -SCARED_SR.SCARED_SR_PN, 
+                             -SCARED_SR.SCARED_SR_GD,
+                             -SCARED_SR.SCARED_SR_11)
+
+# Store participant identifiers temporarily 
+idTempChild = scaredChild$Identifiers
+
+# remove ID variable, then make all data numeric (numbers are represented as strings in the raw data)
+# Missing data represented with '.' -- will get turned to NA here
+scaredChild = dplyr::select(scaredChild, -Identifiers) %>%
+  mutate_if(., is.character, as.numeric) 
+
+# put IDs back in
+scaredChild$Identifiers = idTempChild
+
+# Impute SCARED-C scores with partially complete data
+scaredChildNotComplete = scaredChild
+
+# see how many items each person is missing
+scaredChildNotComplete$numMissing = rowSums(is.na(scaredChildNotComplete))
+
+# variables to use for imputation (all individual items)
+impVarsChild = names(scaredChildNotComplete)[1:40]
+
+# impute missing items for people missing only some items
+scaredChildPartial = dplyr::filter(scaredChildNotComplete, numMissing < 40) %>%
+  VIM::kNN(., k = 5, numFun = median, catFun = maxCat, imp_var = TRUE, dist_var = impVarsChild, addRandom = FALSE) 
+
+# Save back into scaredChild
+scaredChild = dplyr::select(scaredChildPartial, -contains('imp'))
+
+# Get total SCARED-C sum score for each participant, take only complete cases, create binary indicator based on clinical cutoff threshold of >= 25, and remove item-level variables
+scaredChild = mutate(scaredChild , scaredSumChild = rowSums(scaredChild[1:40], na.rm = TRUE)) %>%
+  filter(complete.cases(.)) %>%
+  mutate(., scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0)) %>%
+  dplyr::select(., Identifiers, scaredSumChild, scaredBinChild) 
+```
+
+
+## KSADS
+
+The data have already been mostly cleaned in 1b, but here we create a binary variable indicating a diagnosis of any one of 13 anxiety disorders. We also filter out subjects where the KSADS clinician evalution was marked as incomplete -- these participants will not be included in complete-cases analysis, and their KSADS diagnoses will be imputed for imputation pipelines.
+
+```{r}
+ksadsAllDiagnoses = read.csv('../cleanData/clinicianConsensusDiagnoses.csv', stringsAsFactors = FALSE) %>%
+  dplyr::filter(., No.Diagnosis.Given..Incomplete.Eval != 1) %>%
+  dplyr::select(., 
+                'Other Specified Anxiety Disorder' = Other.Specified.Anxiety.Disorder,
+                'Social Anxiety / Social Phobia' = Social.Anxiety..Social.Phobia.,
+                'Generalized Anxiety Disorder' = Generalized.Anxiety.Disorder,
+                'Separation Anxiety'= Separation.Anxiety,
+                'Unspecified Anxiety Disorder' = Unspecified.Anxiety.Disorder,
+                'Specific Phobia' = Specific.Phobia, 
+                'Obsessive Compulsive Disorder' = Obsessive.Compulsive.Disorder, 
+                'Panic Disorder' = Panic.Disorder,
+                'Adjustment Disorders' = Adjustment.Disorders, 
+                'Acute Stress Disorder' = Acute.Stress.Disorder, 
+                'Selective Mutism' = Selective.Mutism, 
+                'Post-Traumatic Stress Disorder' = Posttraumatic.Stress.Disorder, 
+                Agoraphobia, Identifiers) 
+
+# Calculate sum across all rows (diagnoses)
+ksadsAllDiagnoses$ksadsBin = ksadsAllDiagnoses %>%
+  dplyr::select(., -Identifiers) %>%
+  rowSums()
+
+# Binarize the ksadsBin variable to ask if participants had a diagnosis or not
+ksads = dplyr::select(ksadsAllDiagnoses, ksadsBin, Identifiers) %>%
+  mutate(., ksadsBin = ifelse(ksadsBin > 0, 1, 0))
+```
+
+# Put complete dataset with missing values together
+```{r}
+fullHBN = justId %>%
+  filter(., Identifiers != ',assessment', !is.na(age)) %>% # remove one participant without age
+  left_join(., cbclItems) %>%
+  left_join(., scaredChild) %>%
+  left_join(., scaredParent) %>%
+  left_join(., ksads) 
+
+# Remove participants with NO data for any measures
+fullHBN = removeRowsAllNA(fullHBN, columns = 4:13) %>%
+  mutate(ageCenter = age - mean(age))
+
+# wrute our fullHBN
+write.csv(fullHBN, file = '../cleanData/fullHBN.csv', row.names = FALSE)
+```
+## How many missing? 
+```{r}
+# Calculate how many people are missing each measure
+missingCBCL = nrow(filter(fullHBN, is.na(cbclGISum)))
+missingScaredParent = nrow(filter(fullHBN, is.na(scaredSumParent)))
+missingScaredChild = nrow(filter(fullHBN, is.na(scaredSumChild)))
+missingKsads = nrow(filter(fullHBN, is.na(ksadsBin)))
+
+# Make dataframes for different combinations of complete data
+cbclAndAtLeastOneOutcome = filter(fullHBN, !is.na(cbclGISum),
+                                  (!is.na(scaredSumParent | !is.na(scaredSumChild) | !is.na(ksadsBin))))
+cbclAndScaredParent = filter(fullHBN, !is.na(cbclGISum), !is.na(scaredSumParent))
+cbclAndScaredChild= filter(fullHBN, !is.na(cbclGISum), !is.na(scaredSumChild))
+cbclAndKsads = filter(fullHBN, !is.na(cbclGISum), !is.na(ksadsBin))
+
+```
+
+Missing:
+  * CBCL: `r missingCBCL`
+  * Scared Parent: `r missingScaredParent`
+  * Scared Child: `r missingScaredChild`
+  * Ksads: `r missingKsads`
+
+# Partition out test set from data with cbcl and at least one outcome
+```{r}
+# set the seed so it is the same everytime
+set.seed(112993)
+
+# Split 75% of data for training, 25% for testing
+trainCompleteIdx = caret::createDataPartition(cbclAndAtLeastOneOutcome$cbclGISum, p = .75)[[1]]
+trainComplete = cbclAndAtLeastOneOutcome[trainCompleteIdx,]
+testComplete = cbclAndAtLeastOneOutcome[-trainCompleteIdx,]
+
+# Data for imputation is all data not included in the test set
+trainForImpute = filter(fullHBN, !Identifiers %in% testComplete$Identifiers)
+
+                                                
+# Write out separate files for training/test -- commented out so we don't overwrite the random seeding
+write.csv(trainComplete, file = '../cleanData/hbnTrainComplete.csv', row.names = FALSE) 
+write.csv(testComplete, file = '../cleanData/hbnTestComplete.csv', row.names = FALSE)
+write.csv(trainForImpute, file = '../cleanData/hbnTrainForImpute.csv', row.names = FALSE)
+```
+
+
+# Session Info
+```{r}
+sessionInfo()
+```
+

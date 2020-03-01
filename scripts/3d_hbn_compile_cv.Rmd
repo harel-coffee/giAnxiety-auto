@@ -1,0 +1,529 @@
+---
+title: "3d: Compile HBN CV Results"
+author: "Paul A. Bloom"
+date: "June 21, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown compiles cross-validation results across pipelines, metrics, and outcomes from the HBN training set. It also runs CV using the RMSE metric that wasn't used in 3A-C. It outputs a plot comparing all distributions of cv performance.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
+```
+
+# Load pacakages/Set themes
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(rstanarm)
+library(arm)
+library(cowplot)
+source('helperFunctions.R')
+source('cvFunction.R')
+
+# Plot theme
+mytheme = theme_bw() + theme(panel.grid.major = element_blank(), 
+                             axis.text=element_text(size=14),
+                             axis.title.x=element_text(size=14,face="bold"),
+                             axis.title.y=element_text(size=14, face="bold"),
+                             plot.title=element_text(size=20, hjust = 0.5))
+theme_set(mytheme)
+
+# Color palette
+myPal = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
+
+```
+
+# Parent CV
+
+## Load in HBN Training Sets
+
+```{r}
+# Complete
+hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
+hbnCompleteTrainScaredParent = filter(hbnCompleteTrain, !is.na(scaredSumParent)) %>%
+  mutate(., missingData = 'complete')
+
+# 3NN
+hbn3NNTrain = read.csv('../cleanData/hbnTrain3NN.csv', stringsAsFactors = FALSE) %>%
+  mutate(., missingData = '3NN')
+
+# 9NN
+hbn9NNTrain = read.csv('../cleanData/hbnTrain9NN.csv', stringsAsFactors = FALSE) %>%
+  mutate(., missingData = '9NN')
+```
+
+
+## RMSE CV for Linear Regression - Define Linear Regresson Formulas
+
+```{r}
+sumFormulas = list(scaredSumParent ~ sex + ageCenter + cbclGISum, 
+                   scaredSumParent ~ sex + ageCenter*cbclGISum,
+                   scaredSumParent ~ sex*cbclGISum + ageCenter, 
+                   scaredSumParent ~ cbclGISum*ageCenter*sex)
+
+indivFormulas = list(scaredSumParent ~ sex + ageCenter + nausea + stomachache_cramps + vomiting + constipated,
+                     scaredSumParent ~ sex + nausea*ageCenter + stomachache_cramps*ageCenter + vomiting*ageCenter + constipated*ageCenter,
+                     scaredSumParent ~ ageCenter + nausea*sex + stomachache_cramps*sex + vomiting*sex + constipated*sex,
+                     scaredSumParent ~ nausea*sex*ageCenter + stomachache_cramps*sex*ageCenter + vomiting*sex*ageCenter + constipated*sex*ageCenter)
+
+
+noGiFormulas = list(scaredSumParent ~ ageCenter,
+                    scaredSumParent ~ sex,
+                    scaredSumParent ~ ageCenter + sex,
+                    scaredSumParent ~ ageCenter*sex)
+
+interceptFormula = list(scaredSumParent ~ 1)
+```
+
+## Define logistic regression formulas
+
+```{r}
+sumFormulasScaredBinParent = list(scaredBinParent ~ sex + ageCenter + cbclGISum, 
+                   scaredBinParent ~ sex + ageCenter*cbclGISum,
+                   scaredBinParent ~ sex*cbclGISum + ageCenter, 
+                   scaredBinParent ~ cbclGISum*ageCenter*sex)
+
+indivFormulasScaredBinParent = list(scaredBinParent ~ sex + ageCenter + nausea + stomachache_cramps + vomiting + constipated,
+                     scaredBinParent ~ sex + nausea*ageCenter + stomachache_cramps*ageCenter + vomiting*ageCenter + constipated*ageCenter,
+                     scaredBinParent ~ ageCenter + nausea*sex + stomachache_cramps*sex + vomiting*sex + constipated*sex,
+                     scaredBinParent ~ nausea*sex*ageCenter + stomachache_cramps*sex*ageCenter + vomiting*sex*ageCenter + constipated*sex*ageCenter)
+
+
+noGiFormulasScaredBinParent = list(scaredBinParent ~ ageCenter,
+                    scaredBinParent ~ sex,
+                    scaredBinParent ~ ageCenter + sex,
+                    scaredBinParent ~ ageCenter*sex)
+
+interceptFormulaScaredBinParent = list(scaredBinParent ~ 1)
+```
+
+## RMSE: Run cross-val on each training set
+
+```{r}
+# number of rounds to run
+numRounds = 100
+
+# multiple training sets (complete cases, 3NN imputation, 9NN imputation)
+trainSets = list(hbnCompleteTrainScaredParent, hbn3NNTrain, hbn9NNTrain)
+
+# data frame to store results of cross-val with each training set
+cvScaredRMSEParentOutputs = data.frame(index = 1:length(trainSets), trainSet = c('complete', '3NN', '9NN'))
+
+for (ii in 1:length(trainSets)){
+  print(ii)
+  # select the training set
+  trainSet = trainSets[[ii]]
+  
+  # Run the crossval & save to dataframe -- using the cvManyLinearModels() custom function
+  # Linear regression cv with RMSE as the metric
+  cvLinear = cvManyLinearModels(inputData = trainSet, outcomeColumn = 'scaredSumParent', 
+                                metric = rMSE, numFolds = 10, cvRounds = numRounds, modType = lm,
+                                sumFormulas = sumFormulas, indivFormulas = indivFormulas, 
+                                noGiFormulas = noGiFormulas, interceptFormula = interceptFormula)
+  
+
+  # Order factor levels of model forumulations for plotting
+  cvLinear[[2]]$ModelSetOrdered = ordered(cvLinear[[2]]$ModelSet, c('GI Sum Score', 'GI Indiv. Items', 'No GI Term', 'Intercept Only'))
+
+  # Order factor levels of model specification within model formulation for plotting
+  cvLinear[[2]]$model = ordered(cvLinear[[2]]$model, c('No Interactions', 'Age*GI', 'Sex*GI', 'Age*Sex*GI', 'Age', 'Sex', 'Age + Sex', 'Age*Sex', 'Intercept Only'))
+
+  # Add cv objects to output df
+  cvScaredRMSEParentOutputs$cvLinear[ii] = list(cvLinear)
+
+  # Make plot comparing cross-val distributions
+  hbnLinearRegScaredParentCV = ggplot(cvLinear[[2]], aes(x = model, y = median)) +
+    geom_errorbar(aes(ymin = upr80, ymax = lwr80, color = ModelSet), width = 0, lwd = 1) +
+    geom_errorbar(aes(ymin = upr95, ymax = lwr95, color = ModelSet), width = .1) +
+    geom_point(size = 2) +
+    facet_grid(~ModelSetOrdered, scales = 'free_x') +
+    theme(axis.text.x = element_text(angle =90, hjust = 1),
+          legend.position = 'none',
+          plot.title = element_text(hjust = 0, size = 15)) +
+    labs(x = '', y = 'RMSE', title = 'A') +
+    scale_color_manual(values = myPal)
+  
+
+  # Store infor on which model is best, as well as direct comparisons
+  bestLinearModelIndivResults = dplyr::select(cvLinear[[1]], 
+                    sum = contains(paste0('Sum', as.character(cvLinear[[3]]$modelNum[cvLinear[[3]]$ModelSet == 'GI Sum Score']))),
+                    indiv = contains(paste0('Indiv', as.character(cvLinear[[3]]$modelNum[cvLinear[[3]]$ModelSet == 'GI Indiv. Items']))),
+                    noGi = contains(paste0('NoGI', as.character(cvLinear[[3]]$modelNum[cvLinear[[3]]$ModelSet == 'No GI Term']))),
+                    intercept = contains('Int'))
+
+  # Get percentages of folds for which models were better than other models usinc percentBetter() function
+  sumOverNoGiLinear =  percentBetter(bestLinearModelIndivResults$noGi, bestLinearModelIndivResults$sum)
+  sumOverIntLinear = percentBetter(bestLinearModelIndivResults$intercept, bestLinearModelIndivResults$sum)
+  indivOverIntLinear = percentBetter(bestLinearModelIndivResults$intercept, bestLinearModelIndivResults$indiv)
+  indivOverNoGiLinear = percentBetter(bestLinearModelIndivResults$noGi, bestLinearModelIndivResults$indiv)
+  indivOverSumLinear = percentBetter(bestLinearModelIndivResults$sum, bestLinearModelIndivResults$indiv)
+  noGiOverIntLinear = percentBetter(bestLinearModelIndivResults$intercept, bestLinearModelIndivResults$noGi)
+  
+  # Put model comparisons in output df
+  cvScaredRMSEParentOutputs$modelComparisonsLinear[ii] = list(list('sumOverNoGi' = sumOverNoGiLinear, 
+                                                                   'sumOverInt' = sumOverIntLinear,
+                                                               'indivOverInt' = indivOverIntLinear, 
+                                                               'indivOverNoGi' = indivOverNoGiLinear,
+                                                               'indivOverSum' = indivOverSumLinear, 
+                                                               'noGiOverInt' = noGiOverIntLinear))
+  
+  # Make 'within-subjects' scatter plots
+  # GI Sum vs. No-GI
+  pSumNoGiLinear = ggplot(bestLinearModelIndivResults, aes(x = sum, y = noGi)) +
+  geom_point(alpha = .3) +
+  geom_abline(slope = 1, intercept = 0) +
+  ylim(6, 15) + xlim(6, 15) +
+  theme_classic() +
+  labs(x= 'GI Sum', y = 'No-GI', title = 'B') +
+  annotate("text", x = 11, y = 8, label = paste0('GI model better\n ', 100*sumOverNoGiLinear, '% of folds'),
+           size = 2)
+  
+  # GI Indiv. Items vs. No-GI
+  pIndivNoGiLinear = ggplot(bestLinearModelIndivResults, aes(x = indiv, y = noGi)) +
+    geom_point(alpha = .3) +
+    geom_abline(slope = 1, intercept = 0) +
+    ylim(6, 15) + xlim(6, 15) +
+    theme_classic() +
+    labs(x= 'GI Indiv Items', y = 'No-GI', title = 'C') +
+    annotate("text", x = 11, y = 8, label = paste0('GI model better\n ', 100*indivOverNoGiLinear, '% of folds'),
+             size = 2)
+  
+  # GI Sum vs. No-GI
+  pSumIndivLinear = ggplot(bestLinearModelIndivResults, aes(y = sum, x = indiv)) +
+    geom_point(alpha = .3) +
+    geom_abline(slope = 1, intercept = 0) +
+    ylim(6, 15) + xlim(6, 15) +
+    theme_classic() +
+    labs(y= 'GI Sum', x = 'GI Indiv Items', title = 'D') +
+    annotate("text", x = 11, y = 8, label = paste0('Indiv. Items Better\n ', 100*indivOverSumLinear, '% of folds'),
+             size = 2)
+
+  
+  # Put all plots together and save pdf
+  pdf(paste0('../plots/hbnLinearRegScaredParentCV_', trainSet$missingData[1], '_RMSE.pdf'), height = 6, width = 8)
+  gridExtra::grid.arrange(hbnLinearRegScaredParentCV, pSumNoGiLinear, pIndivNoGiLinear, pSumIndivLinear, 
+                          layout_matrix = rbind(c(1,1,1),c(2,3,4)))
+  dev.off()
+}
+```
+
+```{r}
+# Save cross-val outputs
+save(cvScaredRMSEParentOutputs, file = '../output/cvScaredParentOutputsRMSE.rda', compress = TRUE)
+```
+
+
+# Child RMSE CV
+
+
+## Load in training sets
+
+```{r}
+hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
+hbn3NNTrain = read.csv('../cleanData/hbnTrain3NN.csv', stringsAsFactors = FALSE) %>%
+  mutate(., missingData = '3NN')
+hbn9NNTrain = read.csv('../cleanData/hbnTrain9NN.csv', stringsAsFactors = FALSE) %>%
+  mutate(., missingData = '9NN')
+hbnCompleteTrainScaredChild = filter(hbnCompleteTrain, !is.na(scaredSumChild)) %>%
+  mutate(., missingData = 'complete')
+```
+
+
+## Define linear regression formulas for child CV
+
+```{r}
+sumFormulas = list(scaredSumChild ~ sex + ageCenter + cbclGISum, 
+                   scaredSumChild ~ sex + ageCenter*cbclGISum,
+                   scaredSumChild ~ sex*cbclGISum + ageCenter, 
+                   scaredSumChild ~ cbclGISum*ageCenter*sex)
+
+indivFormulas = list(scaredSumChild ~ sex + ageCenter + nausea + stomachache_cramps + vomiting + constipated,
+                     scaredSumChild ~ sex + nausea*ageCenter + stomachache_cramps*ageCenter + vomiting*ageCenter + constipated*ageCenter,
+                     scaredSumChild ~ ageCenter + nausea*sex + stomachache_cramps*sex + vomiting*sex + constipated*sex,
+                     scaredSumChild ~ nausea*sex*ageCenter + stomachache_cramps*sex*ageCenter + vomiting*sex*ageCenter + constipated*sex*ageCenter)
+
+
+noGiFormulas = list(scaredSumChild ~ ageCenter,
+                    scaredSumChild ~ sex,
+                    scaredSumChild ~ ageCenter + sex,
+                    scaredSumChild ~ ageCenter*sex)
+
+interceptFormula = list(scaredSumChild ~ 1)
+
+```
+
+## Logistic regression formula definitions
+
+```{r}
+sumFormulasScaredBinChild = list(scaredBinChild ~ sex + ageCenter + cbclGISum, 
+                   scaredBinChild ~ sex + ageCenter*cbclGISum,
+                   scaredBinChild ~ sex*cbclGISum + ageCenter, 
+                   scaredBinChild ~ cbclGISum*ageCenter*sex)
+
+indivFormulasScaredBinChild = list(scaredBinChild ~ sex + ageCenter + nausea + stomachache_cramps + vomiting + constipated,
+                     scaredBinChild ~ sex + nausea*ageCenter + stomachache_cramps*ageCenter + vomiting*ageCenter + constipated*ageCenter,
+                     scaredBinChild ~ ageCenter + nausea*sex + stomachache_cramps*sex + vomiting*sex + constipated*sex,
+                     scaredBinChild ~ nausea*sex*ageCenter + stomachache_cramps*sex*ageCenter + vomiting*sex*ageCenter + constipated*sex*ageCenter)
+
+
+noGiFormulasScaredBinChild = list(scaredBinChild ~ ageCenter,
+                    scaredBinChild ~ sex,
+                    scaredBinChild ~ ageCenter + sex,
+                    scaredBinChild ~ ageCenter*sex)
+
+interceptFormulaScaredBinChild = list(scaredBinChild ~ 1)
+```
+
+## Run RMSE child cross-val on each training set
+
+```{r}
+# multiple training sets (complete cases, 3NN imputation, 9NN imputation)
+trainSets = list(hbnCompleteTrainScaredChild, hbn3NNTrain, hbn9NNTrain)
+
+# data frame to store results of cross-val with each training set
+cvScaredRMSEChildOutputs = data.frame(index = 1:length(trainSets), trainSet = c('complete', '3NN', '9NN'))
+
+for (ii in 1:length(trainSets)){
+  print(ii)
+  # select the training set
+  trainSet = trainSets[[ii]]
+  
+  # Run the crossval & save to dataframe
+  cvLinear = cvManyLinearModels(inputData = trainSet, outcomeColumn = 'scaredSumChild', 
+                                metric = rMSE, numFolds = 10, cvRounds = numRounds, modType = lm,
+                                sumFormulas = sumFormulas, indivFormulas = indivFormulas, 
+                                noGiFormulas = noGiFormulas, interceptFormula = interceptFormula)
+  
+
+  # Order factor levels of model forumulations for plotting
+  cvLinear[[2]]$ModelSetOrdered = ordered(cvLinear[[2]]$ModelSet, c('GI Sum Score', 'GI Indiv. Items', 'No GI Term', 'Intercept Only'))
+
+  # Order factor levels of model specification within model formulation for plotting
+  cvLinear[[2]]$model = ordered(cvLinear[[2]]$model, c('No Interactions', 'Age*GI', 'Sex*GI', 'Age*Sex*GI', 'Age', 'Sex', 'Age + Sex', 'Age*Sex', 'Intercept Only'))
+
+  cvScaredRMSEChildOutputs$cvLinear[ii] = list(cvLinear)
+
+  # Make plot comparing cross-val distributions
+  hbnLinearRegScaredChildCV = ggplot(cvLinear[[2]], aes(x = model, y = median)) +
+    geom_errorbar(aes(ymin = upr80, ymax = lwr80, color = ModelSet), width = 0, lwd = 1) +
+    geom_errorbar(aes(ymin = upr95, ymax = lwr95, color = ModelSet), width = .1) +
+    geom_point(size = 2) +
+    facet_grid(~ModelSetOrdered, scales = 'free_x') +
+    theme(axis.text.x = element_text(angle =90, hjust = 1),
+          legend.position = 'none',
+          plot.title = element_text(hjust = 0, size = 15)) +
+    labs(x = '', y = 'RMSE', title = 'A') +
+    scale_color_manual(values = myPal)
+  
+
+  # Store infor on which model is best, as well as direct comparisons
+  bestLinearModelIndivResults = dplyr::select(cvLinear[[1]], 
+                    sum = contains(paste0('Sum', as.character(cvLinear[[3]]$modelNum[cvLinear[[3]]$ModelSet == 'GI Sum Score']))),
+                    indiv = contains(paste0('Indiv', as.character(cvLinear[[3]]$modelNum[cvLinear[[3]]$ModelSet == 'GI Indiv. Items']))),
+                    noGi = contains(paste0('NoGI', as.character(cvLinear[[3]]$modelNum[cvLinear[[3]]$ModelSet == 'No GI Term']))),
+                    intercept = contains('Int'))
+
+  sumOverNoGiLinear =  percentBetter(bestLinearModelIndivResults$noGi, bestLinearModelIndivResults$sum)
+  sumOverIntLinear = percentBetter(bestLinearModelIndivResults$intercept, bestLinearModelIndivResults$sum)
+  indivOverIntLinear = percentBetter(bestLinearModelIndivResults$intercept, bestLinearModelIndivResults$indiv)
+  indivOverNoGiLinear = percentBetter(bestLinearModelIndivResults$noGi, bestLinearModelIndivResults$indiv)
+  indivOverSumLinear = percentBetter(bestLinearModelIndivResults$sum, bestLinearModelIndivResults$indiv)
+  noGiOverIntLinear = percentBetter(bestLinearModelIndivResults$intercept, bestLinearModelIndivResults$noGi)
+  
+  cvScaredRMSEChildOutputs$modelComparisonsLinear[ii] = list(list('sumOverNoGi' = sumOverNoGiLinear, 'sumOverInt' = sumOverIntLinear,
+                                                               'indivOverInt' = indivOverIntLinear, 'indivOverNoGi' = indivOverNoGiLinear,
+                                                               'indivOverSum' = indivOverSumLinear, 'noGiOverInt' = noGiOverIntLinear))
+  
+  # Make 'within-subjects' scatter plots
+  pSumNoGiLinear = ggplot(bestLinearModelIndivResults, aes(x = sum, y = noGi)) +
+  geom_point(alpha = .3) +
+  geom_abline(slope = 1, intercept = 0) +
+  ylim(8, 17) + xlim(8, 17) +
+  theme_classic() +
+  labs(x= 'GI Sum', y = 'No-GI', title = 'B') +
+  annotate("text", x = 13, y = 9, label = paste0('GI model better\n ', 100*sumOverNoGiLinear, '% of folds'),
+           size = 2)
+  
+  pIndivNoGiLinear = ggplot(bestLinearModelIndivResults, aes(x = indiv, y = noGi)) +
+    geom_point(alpha = .3) +
+    geom_abline(slope = 1, intercept = 0) +
+    ylim(8, 17) + xlim(8, 17) +
+    theme_classic() +
+    labs(x= 'GI Indiv Items', y = 'No-GI', title = 'C') +
+    annotate("text", x = 13, y = 9, label = paste0('GI model better\n ', 100*indivOverNoGiLinear, '% of folds'),
+             size = 2)
+  
+  pSumIndivLinear = ggplot(bestLinearModelIndivResults, aes(y = sum, x = indiv)) +
+    geom_point(alpha = .3) +
+    geom_abline(slope = 1, intercept = 0) +
+    ylim(8, 17) + xlim(8, 17) +
+    theme_classic() +
+    labs(y= 'GI Sum', x = 'GI Indiv Items', title = 'D') +
+    annotate("text", x = 13, y = 9, label = paste0('Indiv. Items Better\n ', 100*indivOverSumLinear, '% of folds'),
+             size = 2)
+
+  
+  # Put all plots together and save pdf
+  pdf(paste0('../plots/hbnLinearRegScaredChildCV_', trainSet$missingData[1], '_RMSE.pdf'), height = 6, width = 8)
+  gridExtra::grid.arrange(hbnLinearRegScaredChildCV, pSumNoGiLinear, pIndivNoGiLinear, pSumIndivLinear, 
+                          layout_matrix = rbind(c(1,1,1),c(2,3,4)))
+  dev.off()
+}
+```
+
+```{r}
+# Save cross-val outputs
+save(cvScaredRMSEChildOutputs, file = '../output/cvScaredChildOutputsRMSE.rda', compress = TRUE)
+```
+
+
+# Plots comparing CV RMSE & Q2 across pipelines for both SCARED-C and SCARED-P
+
+Load Q2 CV summaries
+```{r}
+load('../output/cvScaredParentOutputs.rda')
+load('../output/cvScaredChildOutputs.rda')
+load('../output/cvKsadsOutputs.rda')
+```
+
+## Combine CV info for parent/child SCARED across all pipelines
+```{r}
+# label each dataframe with reporter and pipeline
+
+# RMSE
+childCompleteBestRMSE = cvScaredRMSEChildOutputs$cvLinear[[1]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = 'Complete Cases')
+child3NNBestRMSE = cvScaredRMSEChildOutputs$cvLinear[[2]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = '3NN Imputation')
+child9NNBestRMSE = cvScaredRMSEChildOutputs$cvLinear[[3]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = '9NN Imputation')
+
+parentCompleteBestRMSE = cvScaredRMSEParentOutputs$cvLinear[[1]]$`Selected Models`  %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = 'Complete Cases')
+parent3NNBestRMSE = cvScaredRMSEParentOutputs$cvLinear[[2]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = '3NN Imputation')
+parent9NNBestRMSE = cvScaredRMSEParentOutputs$cvLinear[[3]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = '9NN Imputation')
+
+# Q2
+childCompleteBestQ2 = cvScaredChildOutputs$cvLinear[[1]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = 'Complete Cases')
+child3NNBestQ2 = cvScaredChildOutputs$cvLinear[[2]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = '3NN Imputation')
+child9NNBestQ2 = cvScaredChildOutputs$cvLinear[[3]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = '9NN Imputation')
+
+parentCompleteBestQ2 = cvScaredParentOutputs$cvLinear[[1]]$`Selected Models`  %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = 'Complete Cases')
+parent3NNBestQ2 = cvScaredParentOutputs$cvLinear[[2]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = '3NN Imputation')
+parent9NNBestQ2 = cvScaredParentOutputs$cvLinear[[3]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = '9NN Imputation')
+
+```
+
+## Pull all CV results into one summary dataframe (for each outcome)
+
+Reorder factor levels here for plotting too
+```{r}
+allRMSESummary = rbind(childCompleteBestRMSE, child3NNBestRMSE, child9NNBestRMSE, 
+                       parentCompleteBestRMSE, parent3NNBestRMSE, parent9NNBestRMSE) %>%
+  mutate(., Reporter = factor(Reporter, levels = c('Parent Report', 'Child Report')))
+
+
+allQ2Summary = rbind(childCompleteBestQ2, child3NNBestQ2, child9NNBestQ2, 
+                     parentCompleteBestQ2, parent3NNBestQ2, parent9NNBestQ2) %>%
+  mutate(., Reporter = factor(Reporter, levels = c('Parent Report', 'Child Report')))
+```
+
+## Plots for RMSE and Q2 CV
+```{r}
+allRMSEPlot = ggplot(allRMSESummary, aes(x = ModelSet, y = median, color = Pipeline)) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  facet_grid(~Reporter) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15)) +
+  labs(y = 'RMSE', x = '', title = 'A', subtitle = 'Continuous Anxiety Symptoms')
+
+allQ2Plot = ggplot(allQ2Summary, aes(x = ModelSet, y = median, color = Pipeline)) +
+  geom_hline(yintercept = 0, lty = 2) + 
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  facet_grid(~Reporter) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15),
+        legend.position = 'none') +
+  labs(y = bquote(~q^2), x = '', title = 'B', subtitle = 'Continuous Anxiety Symptoms') 
+
+
+```
+
+## Combine CV info for ksads across pipelines
+
+Log loss CV here
+```{r}
+
+# ksads
+ksadsCompleteBest = cvKsadsOutputs$cvLogistic[[1]]$`Selected Models` %>%
+  mutate(., Pipeline = 'Complete Cases', Reporter = 'Clinician Consensus')
+ksads3NNBest= cvKsadsOutputs$cvLogistic[[2]]$`Selected Models` %>%
+  mutate(., Pipeline = '3NN Imputation', Reporter = 'Clinician Consensus')
+ksads9NNBest = cvKsadsOutputs$cvLogistic[[3]]$`Selected Models` %>%
+  mutate(., Pipeline = '9NN Imputation', Reporter = 'Clinician Consensus')
+
+# SCARED-C
+childCompleteBestLogLoss = cvScaredChildOutputs$cvLogistic[[1]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = 'Complete Cases')
+child3NNBestLogLoss = cvScaredChildOutputs$cvLogistic[[2]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = '3NN Imputation')
+child9NNBestLogLoss = cvScaredChildOutputs$cvLogistic[[3]]$`Selected Models` %>%
+  mutate(., Reporter = 'Child Report', Pipeline = '9NN Imputation')
+
+# SCARED-P
+parentCompleteBestLogLoss = cvScaredParentOutputs$cvLogistic[[1]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = 'Complete Cases')
+parent3NNBestLogLoss = cvScaredParentOutputs$cvLogistic[[2]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = '3NN Imputation')
+parent9NNBestLogLoss = cvScaredParentOutputs$cvLogistic[[3]]$`Selected Models` %>%
+  mutate(., Reporter = 'Parent Report', Pipeline = '9NN Imputation')
+
+# Summary of all log loss CV
+allLogLossSummary = rbind(ksadsCompleteBest, ksads3NNBest, ksads9NNBest, 
+                          childCompleteBestLogLoss, child3NNBestLogLoss, child9NNBestLogLoss,
+                          parentCompleteBestLogLoss, parent3NNBestLogLoss, parent9NNBestLogLoss)
+
+# Reorder reporter factor levels
+allLogLossSummary$Reporter = ordered(allLogLossSummary$Reporter, c('Parent Report', 'Child Report', 'Clinician Consensus'))
+
+
+# Plot!
+allLogLossPlot = ggplot(allLogLossSummary, aes(x = ModelSet, y = median, color = Pipeline)) +
+  facet_grid(~Reporter) +
+  geom_point(position = position_dodge(width = .2)) +
+  geom_errorbar(aes(ymin = lwr95, ymax = upr95), width = 0, position = position_dodge(width = .2)) +
+  theme(axis.text.x = element_text(angle =45, hjust = 1, size = 8), 
+        plot.title = element_text(hjust = 0, size = 15),
+        legend.position = 'none') +
+  labs(y = 'Log Loss', x = '', title = 'C', subtitle = 'Binary Clinical Cutoff/Diagnoses')
+
+```
+
+# Combine plots for multipanel CV summary plot
+
+Using cowplot::plot_grid()
+
+```{r}
+cvComparison = plot_grid(allRMSEPlot, allQ2Plot, allLogLossPlot, ncol = 1, align = 'v', axis = 'l')
+save_plot(filename = '../plots/suppCvComparison.pdf', cvComparison, base_height = 9, base_width = 8)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

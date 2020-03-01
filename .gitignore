@@ -1,0 +1,10 @@
+*.html
+*checkpoints*
+archive/
+models/
+output/
+pandaInfo/
+miscDocuments/
+.RData
+.RHistory
+.dropbox

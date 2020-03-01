@@ -1,0 +1,80 @@
+---
+title: "1b: Clean the HBN KSADS data"
+author: "Paul A. Bloom"
+date: "August 5, 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: paper
+---
+
+This markdown takes in the raw HBN spreadsheet of clinician diagnoses (for all diagnoses) on the KSADS and outputs a cleaned set in tabular form, with rows as participants and columns as respective diagnoses. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r}
+library(tidyverse)
+```
+
+# Clean the clinician-consensus evals
+
+This dataset isn't structured in a way that is particularly helpful for futher analysis, so we pull out the 'ClinicianConsensus.DX_##' variables indicating up to 10 diagnoses that a given participant could have. Then, for every possible diagnosis of the 59 possible types, we loop through the data to create a binary indicator variable for each participant indicating if they have that diagnosis or not.
+
+```{r}
+# load in raw messy clinician consensus data
+diagnoses = read.csv('../rawData/clinicianDiagnoses.csv', stringsAsFactors = FALSE)
+
+# select the column for each diagnosis (up to 10 because of coding)
+diagnoses= dplyr::select(diagnoses, Identifiers, 
+                         Diagnosis_ClinicianConsensus.DX_01, 
+                         Diagnosis_ClinicianConsensus.DX_02,
+                         Diagnosis_ClinicianConsensus.DX_03,
+                         Diagnosis_ClinicianConsensus.DX_04,
+                         Diagnosis_ClinicianConsensus.DX_05,
+                         Diagnosis_ClinicianConsensus.DX_06,
+                         Diagnosis_ClinicianConsensus.DX_07,
+                         Diagnosis_ClinicianConsensus.DX_08,
+                         Diagnosis_ClinicianConsensus.DX_09,
+                         Diagnosis_ClinicianConsensus.DX_10)
+
+# find names of all possible diagnoses
+possibleDiagnoses = unique(diagnoses$Diagnosis_ClinicianConsensus.DX_01)
+
+# Remove blank space from vector of possible diagnoses
+possibleDiagnoses = possibleDiagnoses[-47]
+
+# Set up an output dataframe
+diagFrame = setNames(data.frame(matrix(ncol = 59, nrow = 0)), possibleDiagnoses)
+
+# For each possible diagnosis, mark if each subject has it or not
+## Outer loop -- loops through participants
+## Inner loop goes through each possible diagnosis (59)
+for (row in 1:nrow(diagnoses)){
+  diagFrame[row, 60] = diagnoses$Identifiers[row] # put participant identifier in column 60 of each row
+  # for every other column, check if participant has that diagnosis. Yes = 1, no = 0
+  for (column in 1:59){
+    if (names(diagFrame)[column] %in% diagnoses[row,]){
+      diagFrame[row,column] = 1
+    }
+    else{
+      diagFrame[row, column] = 0
+    }
+  }
+}
+
+# pub subject identifiers back in
+names(diagFrame)[60] = 'Identifiers'
+write.csv(diagFrame, '../cleanData/clinicianConsensusDiagnoses.csv', row.names = FALSE)
+```
+
+
+# Session Info
+```{r}
+sessionInfo()
+```
+

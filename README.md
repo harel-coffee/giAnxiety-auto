@@ -8,15 +8,6 @@ All analysis code can be found in the scripts folder. Analyses largely follow th
 
 Manuscript currently in prep!
 
-## Beta Version: Rapid GI Screener for Anxiety
-
-App beta can be found [here:](https://pbloom.shinyapps.io/gishinyapp/)
-
-<p float="left">
-  <img src="/images/screenshot.png" width="650" />
-</p>
-
-
 **Questions or comments?**
 Email paul.bloom@columbia.edu 
 

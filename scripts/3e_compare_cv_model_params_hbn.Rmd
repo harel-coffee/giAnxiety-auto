@@ -35,6 +35,10 @@ myPal3_reorder = c('#88419d', '#2b8cbe','#cb181d')
 myPal4 = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
 myPal4_reorder = c('#88419d', '#2b8cbe', '#238b45','#cb181d')
 
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 
 
@@ -47,27 +51,27 @@ load('../output/scaredChildModels.rda')
 # Pull in stan summaries
 childSumComplete = completeScaredChildLinearModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
 
 childIndivComplete = completeScaredChildLinearModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
 
 childSum3NN= threeNNScaredChildLinearModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
 
 childIndiv3NN= threeNNScaredChildLinearModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
 
 childSum9NN= NineNNScaredChildLinearModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
 
 childIndiv9NN= NineNNScaredChildLinearModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
 ```
 
 Put all child linear models together in one dataframe, then relabel terms for better visualization
@@ -75,8 +79,8 @@ Put all child linear models together in one dataframe, then relabel terms for be
 ```{r}
 # Combine info across pipelines and rename terms
 childLinear = rbind(childSum3NN, childSum9NN, childSumComplete, childIndiv9NN, childIndiv3NN,childIndivComplete) %>%
-  dplyr::filter(., term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
-  mutate(., termType = case_when(
+  dplyr::filter(term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
+  mutate(termType = case_when(
     grepl('cbcl', term) & !grepl(':', term) ~ 'GI Sum Score',
     grepl('nausea', term) & !grepl(':', term) ~ 'Nausea',
     grepl('vomi', term) & !grepl(':', term) ~ 'Vomiting',
@@ -134,35 +138,35 @@ ggsave(childLinearParamsPlot, file = '../plots/suppParamsChildLinear.pdf', heigh
 # pull in stan summaries
 childSumComplete = completeScaredChildLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
 
 childIndivComplete = completeScaredChildLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
 
 childSum3NN= threeNNScaredChildLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
 
 childIndiv3NN= threeNNScaredChildLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
 
 childSum9NN= NineNNScaredChildLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Sum')
 
 childIndiv9NN= NineNNScaredChildLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Child', term = row.names(.), Model = 'GI Indiv. Items')
 ```
 
 Aggregate across models, rename terms
 
 ```{r}
 childLogistic = rbind(childSum3NN, childSum9NN, childSumComplete, childIndiv9NN, childIndiv3NN,childIndivComplete) %>%
-  dplyr::filter(., term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
-  mutate(., termType = case_when(
+  dplyr::filter(term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
+  mutate(termType = case_when(
     grepl('cbcl', term) & !grepl(':', term) ~ 'GI Sum Score',
     grepl('nausea', term) & !grepl(':', term) ~ 'Nausea',
     grepl('vomi', term) & !grepl(':', term) ~ 'Vomiting',
@@ -223,27 +227,27 @@ load('../output/scaredParentModels.rda')
 # pull stan summaries
 parentSumComplete = completeScaredParentLinearModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
 
 parentIndivComplete = completeScaredParentLinearModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
 
 parentSum3NN= threeNNScaredParentLinearModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
 
 parentIndiv3NN= threeNNScaredParentLinearModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
 
 parentSum9NN= NineNNScaredParentLinearModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
 
 parentIndiv9NN= NineNNScaredParentLinearModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
 ```
 
 Put all parent linear models together in one dataframe, then relabel terms for better visualization
@@ -251,8 +255,8 @@ Put all parent linear models together in one dataframe, then relabel terms for b
 ```{r}
 # Combine info across pipelines and rename terms
 parentLinear = rbind(parentSum3NN, parentSum9NN, parentSumComplete, parentIndiv9NN, parentIndiv3NN,parentIndivComplete) %>%
-  dplyr::filter(., term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
-  mutate(., termType = case_when(
+  dplyr::filter(term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
+  mutate(termType = case_when(
     grepl('cbcl', term) & !grepl(':', term) ~ 'GI Sum Score',
     grepl('nausea', term) & !grepl(':', term) ~ 'Nausea',
     grepl('vomi', term) & !grepl(':', term) ~ 'Vomiting',
@@ -309,35 +313,35 @@ ggsave(parentLinearParamsPlot, file = '../plots/suppParamsParentLinear.pdf', hei
 # pull stan summaries
 parentSumComplete = completeScaredParentLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
 
 parentIndivComplete = completeScaredParentLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
 
 parentSum3NN= threeNNScaredParentLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
 
 parentIndiv3NN= threeNNScaredParentLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
 
 parentSum9NN= NineNNScaredParentLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Sum')
 
 parentIndiv9NN= NineNNScaredParentLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Parent', term = row.names(.), Model = 'GI Indiv. Items')
 ```
 
 rename terms
 
 ```{r}
 parentLogistic = rbind(parentSum3NN, parentSum9NN, parentSumComplete, parentIndiv9NN, parentIndiv3NN,parentIndivComplete) %>%
-  dplyr::filter(., term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
-  mutate(., termType = case_when(
+  dplyr::filter(term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
+  mutate(termType = case_when(
     grepl('cbcl', term) & !grepl(':', term) ~ 'GI Sum Score',
     grepl('nausea', term) & !grepl(':', term) ~ 'Nausea',
     grepl('vomi', term) & !grepl(':', term) ~ 'Vomiting',
@@ -398,27 +402,27 @@ load('../output/KsadsModels.rda')
 # pull stan summaries
 KsadsSumComplete = completeKsadsLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Ksads', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Ksads', term = row.names(.), Model = 'GI Sum')
 
 KsadsIndivComplete = completeKsadsLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = 'Compete Cases', Reporter = 'Ksads', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = 'Compete Cases', Reporter = 'Ksads', term = row.names(.), Model = 'GI Indiv. Items')
 
 KsadsSum3NN= threeNNKsadsLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Sum')
 
 KsadsIndiv3NN= threeNNKsadsLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Indiv. Items')
 
 KsadsSum9NN= NineNNKsadsLogisticModFrame$modObject[1][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Sum')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Sum')
 
 KsadsIndiv9NN= NineNNKsadsLogisticModFrame$modObject[2][[1]]$stan_summary %>%
   data.frame(.) %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Indiv. Items')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Ksads', term = row.names(.), Model = 'GI Indiv. Items')
 ```
 
 Put all KSADS logistic models together in one dataframe, then relabel terms for better visualization
@@ -426,8 +430,8 @@ Put all KSADS logistic models together in one dataframe, then relabel terms for 
 
 ```{r}
 KsadsLogistic = rbind(KsadsSum3NN, KsadsSum9NN, KsadsSumComplete, KsadsIndiv9NN, KsadsIndiv3NN,KsadsIndivComplete) %>%
-  dplyr::filter(., term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
-  mutate(., termType = case_when(
+  dplyr::filter(term != '(Intercept)', term != 'sigma', term != 'mean_PPD', term != 'log-posterior') %>%
+  mutate(termType = case_when(
     grepl('cbcl', term) & !grepl(':', term) ~ 'GI Sum Score',
     grepl('nausea', term) & !grepl(':', term) ~ 'Nausea',
     grepl('vomi', term) & !grepl(':', term) ~ 'Vomiting',

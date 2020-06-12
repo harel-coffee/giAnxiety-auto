@@ -36,6 +36,11 @@ myPal3 = c('#2b8cbe', '#88419d','#cb181d')
 myPal3_reorder = c('#88419d', '#2b8cbe','#cb181d')
 myPal4 = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
 myPal4_reorder = c('#88419d', '#2b8cbe', '#238b45','#cb181d')
+
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 
 # Number of iterations (will affect runtime)
@@ -71,7 +76,6 @@ sbelfk = rbind(sb, elfk) %>%
 load('../output/scaredParentModels.rda')
 ```
 
-
 # Make Predictions On Test Set
 
 Generate predictions for all models trained on the HBN training data
@@ -86,23 +90,23 @@ write.csv(sbelfk, file = '../cleanData/sb_elfk.csv', row.names = FALSE)
 sbelfk = makePreds(testData = sbelfk, modelsFrame = completeScaredParentLinearModFrame, modelType = 'linear')
 
 # Make predictions (logistic)
-sbelfkLogistic= makePreds(testData = dplyr::select(sbelfk, -contains('pred')), modelsFrame = completeScaredParentLogisticModFrame, modelType = 'logistic')
+sbelfkLogistic= makePreds(testData = dplyr::select(sbelfk, -contains('pred')), 
+                          modelsFrame = completeScaredParentLogisticModFrame, modelType = 'logistic')
 ```
-
 
 # Permutation tests
 
 Define columns to create null permuted distributions for (i.e. the model predictions)
 ```{r}
 predColsScaredParent = list('sum' = sbelfk$sumPreds, 
-                           'indiv' = sbelfk$indivPreds,
-                           'noGi' = sbelfk$noGiPreds,
-                           'intercept' = sbelfk$interceptPreds)
+                            'indiv' = sbelfk$indivPreds,
+                            'noGi' = sbelfk$noGiPreds,
+                            'intercept' = sbelfk$interceptPreds)
 
 predColsScaredParentLogistic = list('sum' = sbelfkLogistic$sumPreds, 
-                           'indiv' = sbelfkLogistic$indivPreds,
-                           'noGi' = sbelfkLogistic$noGiPreds,
-                           'intercept' = sbelfkLogistic$interceptPreds)
+                                    'indiv' = sbelfkLogistic$indivPreds,
+                                    'noGi' = sbelfkLogistic$noGiPreds,
+                                    'intercept' = sbelfkLogistic$interceptPreds)
 ```
 
 # Run permutations for each metric for both linear/logistic
@@ -162,20 +166,20 @@ permLogLossLong = permLogLossParent %>%
   * Logistic: AUC and Log loss
 ```{r}
 bootQ2Parent = boots(numBoots = nBoots, trueOutcome = sbelfk$scaredSumParent, 
-        predCols = predColsScaredParent,
-        metric = 'q2')
+                     predCols = predColsScaredParent,
+                     metric = 'q2')
 
 bootRMSEParent = boots(numBoots = nBoots, trueOutcome = sbelfk$scaredSumParent, 
-        predCols = predColsScaredParent,
-        metric = 'rmse')
+                       predCols = predColsScaredParent,
+                       metric = 'rmse')
 
 bootAucParent = boots(numBoots = nBoots, trueOutcome = sbelfkLogistic$scaredBinParent, 
-        predCols = predColsScaredParentLogistic,
-        metric = 'auc')
+                      predCols = predColsScaredParentLogistic,
+                      metric = 'auc')
 
 bootLogLossParent = boots(numBoots = nBoots, trueOutcome = sbelfkLogistic$scaredBinParent, 
-        predCols = predColsScaredParentLogistic,
-        metric = 'crossEntropy')
+                          predCols = predColsScaredParentLogistic,
+                          metric = 'crossEntropy')
 ```
 
 ## Aggregate bootstraps for each performance metric to long form
@@ -352,7 +356,7 @@ rocIntercept <- roc(sbelfkLogistic$scaredBinParent,sbelfkLogistic$interceptPreds
             print.auc=TRUE, show.thres=TRUE)
 
 # pull roc plots for each model together
-rocList = list('GI Sum' = rocSum, 'GI Indiv. Items' = rocIndiv, 'No GI' = rocNoGi, 'Intercept Only' = rocIntercept)
+rocList = list('GI Sum' = rocSum, 'GI Indiv. Items' = rocIndiv, 'Intercept Only' = rocIntercept, 'No GI' = rocNoGi)
 
 
 # plot all roc curves together in one ggplot
@@ -362,7 +366,7 @@ rocPlot = ggroc(rocList) +
   theme(panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
         legend.position = 'right', legend.title = element_blank()) +
-  labs(x = 'Sensitivity', y = 'Specificity', title = 'D', subtitle = 'ROC curves') +
+  labs(x = 'Specificity', y = 'Sensitivity') +
   scale_color_manual(values = myPal4_reorder, labels = c('GI Sum', 'GI Indiv. Items', 'Intercept Only', 'No GI'))
 
 

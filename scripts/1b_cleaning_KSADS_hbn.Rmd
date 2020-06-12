@@ -17,8 +17,14 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Load packages
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 library(tidyverse)
+
+
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 
 # Clean the clinician-consensus evals
@@ -46,10 +52,10 @@ diagnoses= dplyr::select(diagnoses, Identifiers,
 possibleDiagnoses = unique(diagnoses$Diagnosis_ClinicianConsensus.DX_01)
 
 # Remove blank space from vector of possible diagnoses
-possibleDiagnoses = possibleDiagnoses[-47]
+possibleDiagnoses = Filter(f = function(x) nchar(trimws(x)) != 0, x = possibleDiagnoses)
 
-# Set up an output dataframe
-diagFrame = setNames(data.frame(matrix(ncol = 59, nrow = 0)), possibleDiagnoses)
+# Set up an output dataframe with one column per possible diagnosis
+diagFrame = setNames(data.frame(matrix(ncol = length(possibleDiagnoses), nrow = 0)), possibleDiagnoses)
 
 # For each possible diagnosis, mark if each subject has it or not
 ## Outer loop -- loops through participants
@@ -60,12 +66,9 @@ for (row in 1:nrow(diagnoses)){
   for (column in 1:59){
     if (names(diagFrame)[column] %in% diagnoses[row,]){
       diagFrame[row,column] = 1
-    }
-    else{
-      diagFrame[row, column] = 0
-    }
-  }
-}
+    } else diagFrame[row, column] = 0
+  } # close inner lopp
+} # close outer loop
 
 # pub subject identifiers back in
 names(diagFrame)[60] = 'Identifiers'

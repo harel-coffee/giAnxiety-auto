@@ -36,6 +36,10 @@ theme_set(mytheme)
 # Color palette
 myPal = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
 
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 
 # Parent CV
@@ -46,15 +50,15 @@ myPal = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
 # Complete
 hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
 hbnCompleteTrainScaredParent = filter(hbnCompleteTrain, !is.na(scaredSumParent)) %>%
-  mutate(., missingData = 'complete')
+  mutate(missingData = 'complete')
 
 # 3NN
 hbn3NNTrain = read.csv('../cleanData/hbnTrain3NN.csv', stringsAsFactors = FALSE) %>%
-  mutate(., missingData = '3NN')
+  mutate(missingData = '3NN')
 
 # 9NN
 hbn9NNTrain = read.csv('../cleanData/hbnTrain9NN.csv', stringsAsFactors = FALSE) %>%
-  mutate(., missingData = '9NN')
+  mutate(missingData = '9NN')
 ```
 
 
@@ -226,11 +230,11 @@ save(cvScaredRMSEParentOutputs, file = '../output/cvScaredParentOutputsRMSE.rda'
 ```{r}
 hbnCompleteTrain = read.csv('../cleanData/hbnTrainComplete.csv', stringsAsFactors = FALSE)
 hbn3NNTrain = read.csv('../cleanData/hbnTrain3NN.csv', stringsAsFactors = FALSE) %>%
-  mutate(., missingData = '3NN')
+  mutate(missingData = '3NN')
 hbn9NNTrain = read.csv('../cleanData/hbnTrain9NN.csv', stringsAsFactors = FALSE) %>%
-  mutate(., missingData = '9NN')
+  mutate(missingData = '9NN')
 hbnCompleteTrainScaredChild = filter(hbnCompleteTrain, !is.na(scaredSumChild)) %>%
-  mutate(., missingData = 'complete')
+  mutate(missingData = 'complete')
 ```
 
 
@@ -397,33 +401,33 @@ load('../output/cvKsadsOutputs.rda')
 
 # RMSE
 childCompleteBestRMSE = cvScaredRMSEChildOutputs$cvLinear[[1]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = 'Complete Cases')
+  mutate(Reporter = 'Child Report', Pipeline = 'Complete Cases')
 child3NNBestRMSE = cvScaredRMSEChildOutputs$cvLinear[[2]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = '3NN Imputation')
+  mutate(Reporter = 'Child Report', Pipeline = '3NN Imputation')
 child9NNBestRMSE = cvScaredRMSEChildOutputs$cvLinear[[3]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = '9NN Imputation')
+  mutate(Reporter = 'Child Report', Pipeline = '9NN Imputation')
 
 parentCompleteBestRMSE = cvScaredRMSEParentOutputs$cvLinear[[1]]$`Selected Models`  %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = 'Complete Cases')
+  mutate(Reporter = 'Parent Report', Pipeline = 'Complete Cases')
 parent3NNBestRMSE = cvScaredRMSEParentOutputs$cvLinear[[2]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = '3NN Imputation')
+  mutate(Reporter = 'Parent Report', Pipeline = '3NN Imputation')
 parent9NNBestRMSE = cvScaredRMSEParentOutputs$cvLinear[[3]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = '9NN Imputation')
+  mutate(Reporter = 'Parent Report', Pipeline = '9NN Imputation')
 
 # Q2
 childCompleteBestQ2 = cvScaredChildOutputs$cvLinear[[1]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = 'Complete Cases')
+  mutate(Reporter = 'Child Report', Pipeline = 'Complete Cases')
 child3NNBestQ2 = cvScaredChildOutputs$cvLinear[[2]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = '3NN Imputation')
+  mutate(Reporter = 'Child Report', Pipeline = '3NN Imputation')
 child9NNBestQ2 = cvScaredChildOutputs$cvLinear[[3]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = '9NN Imputation')
+  mutate(Reporter = 'Child Report', Pipeline = '9NN Imputation')
 
 parentCompleteBestQ2 = cvScaredParentOutputs$cvLinear[[1]]$`Selected Models`  %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = 'Complete Cases')
+  mutate(Reporter = 'Parent Report', Pipeline = 'Complete Cases')
 parent3NNBestQ2 = cvScaredParentOutputs$cvLinear[[2]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = '3NN Imputation')
+  mutate(Reporter = 'Parent Report', Pipeline = '3NN Imputation')
 parent9NNBestQ2 = cvScaredParentOutputs$cvLinear[[3]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = '9NN Imputation')
+  mutate(Reporter = 'Parent Report', Pipeline = '9NN Imputation')
 
 ```
 
@@ -433,12 +437,12 @@ Reorder factor levels here for plotting too
 ```{r}
 allRMSESummary = rbind(childCompleteBestRMSE, child3NNBestRMSE, child9NNBestRMSE, 
                        parentCompleteBestRMSE, parent3NNBestRMSE, parent9NNBestRMSE) %>%
-  mutate(., Reporter = factor(Reporter, levels = c('Parent Report', 'Child Report')))
+  mutate(Reporter = factor(Reporter, levels = c('Parent Report', 'Child Report')))
 
 
 allQ2Summary = rbind(childCompleteBestQ2, child3NNBestQ2, child9NNBestQ2, 
                      parentCompleteBestQ2, parent3NNBestQ2, parent9NNBestQ2) %>%
-  mutate(., Reporter = factor(Reporter, levels = c('Parent Report', 'Child Report')))
+  mutate(Reporter = factor(Reporter, levels = c('Parent Report', 'Child Report')))
 ```
 
 ## Plots for RMSE and Q2 CV
@@ -471,27 +475,27 @@ Log loss CV here
 
 # ksads
 ksadsCompleteBest = cvKsadsOutputs$cvLogistic[[1]]$`Selected Models` %>%
-  mutate(., Pipeline = 'Complete Cases', Reporter = 'Clinician Consensus')
+  mutate(Pipeline = 'Complete Cases', Reporter = 'Clinician Consensus')
 ksads3NNBest= cvKsadsOutputs$cvLogistic[[2]]$`Selected Models` %>%
-  mutate(., Pipeline = '3NN Imputation', Reporter = 'Clinician Consensus')
+  mutate(Pipeline = '3NN Imputation', Reporter = 'Clinician Consensus')
 ksads9NNBest = cvKsadsOutputs$cvLogistic[[3]]$`Selected Models` %>%
-  mutate(., Pipeline = '9NN Imputation', Reporter = 'Clinician Consensus')
+  mutate(Pipeline = '9NN Imputation', Reporter = 'Clinician Consensus')
 
 # SCARED-C
 childCompleteBestLogLoss = cvScaredChildOutputs$cvLogistic[[1]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = 'Complete Cases')
+  mutate(Reporter = 'Child Report', Pipeline = 'Complete Cases')
 child3NNBestLogLoss = cvScaredChildOutputs$cvLogistic[[2]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = '3NN Imputation')
+  mutate(Reporter = 'Child Report', Pipeline = '3NN Imputation')
 child9NNBestLogLoss = cvScaredChildOutputs$cvLogistic[[3]]$`Selected Models` %>%
-  mutate(., Reporter = 'Child Report', Pipeline = '9NN Imputation')
+  mutate(Reporter = 'Child Report', Pipeline = '9NN Imputation')
 
 # SCARED-P
 parentCompleteBestLogLoss = cvScaredParentOutputs$cvLogistic[[1]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = 'Complete Cases')
+  mutate(Reporter = 'Parent Report', Pipeline = 'Complete Cases')
 parent3NNBestLogLoss = cvScaredParentOutputs$cvLogistic[[2]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = '3NN Imputation')
+  mutate(Reporter = 'Parent Report', Pipeline = '3NN Imputation')
 parent9NNBestLogLoss = cvScaredParentOutputs$cvLogistic[[3]]$`Selected Models` %>%
-  mutate(., Reporter = 'Parent Report', Pipeline = '9NN Imputation')
+  mutate(Reporter = 'Parent Report', Pipeline = '9NN Imputation')
 
 # Summary of all log loss CV
 allLogLossSummary = rbind(ksadsCompleteBest, ksads3NNBest, ksads9NNBest, 

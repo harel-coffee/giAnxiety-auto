@@ -40,13 +40,7 @@ hbn = pd.read_csv('../../cleanData/fullHBN.csv')
 hbn = hbn.drop(['Identifiers', 'scaredSumChild', 'scaredBinParent', 'scaredBinChild', 'scaredBinParent','ageCenter','cbclGISum'], 1).dropna(axis = 0)
 hbn.reset_index(inplace = True, drop = True)
 X = hbn.drop(['ksadsBin'], axis = 1)
-
-# scale
-scaler = sk.preprocessing.StandardScaler().fit(X)
-X_columns = X.columns
-X = scaler.transform(X)
 y = hbn['ksadsBin']
-hbn.head()
 
 # Set up output dataframe for model metrics
 df = pd.DataFrame({
@@ -73,6 +67,11 @@ param_grid_log = [{'C': [.1,.5,1]}]
 for i in range(n): 
     # Split data 75/25       
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = .25)
+
+    # fit scaling to training set, transform both training and test set
+    scaler = sk.preprocessing.StandardScaler().fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_test = scaler.transform(X_test)
 
     # Randomly oversample to deal with classification of unbalanced classes    
     ros = RandomOverSampler()

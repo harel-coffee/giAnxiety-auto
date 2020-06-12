@@ -37,6 +37,10 @@ myPal3_reorder = c('#88419d', '#2b8cbe','#cb181d')
 myPal4 = c('#2b8cbe', '#88419d', '#238b45','#cb181d')
 myPal4_reorder = c('#88419d', '#2b8cbe', '#238b45','#cb181d')
 
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 # Number of iterations (will affect runtime)
 
@@ -91,38 +95,38 @@ predColsScaredChild = list('sum' = hbnScaredChildTest$sumPreds,
                            'intercept' = hbnScaredChildTest$interceptPreds)
 
 predColsScaredParent = list('sum' = hbnScaredParentTest$sumPreds, 
-                           'indiv' = hbnScaredParentTest$indivPreds,
-                           'noGi' = hbnScaredParentTest$noGiPreds,
-                           'intercept' = hbnScaredParentTest$interceptPreds)
+                            'indiv' = hbnScaredParentTest$indivPreds,
+                            'noGi' = hbnScaredParentTest$noGiPreds,
+                            'intercept' = hbnScaredParentTest$interceptPreds)
 
 
 predColsScaredBinChild = list('sum' = hbnScaredChildBinTest$sumPreds, 
-                           'indiv' = hbnScaredChildBinTest$indivPreds,
-                           'noGi' = hbnScaredChildBinTest$noGiPreds,
-                           'intercept' = hbnScaredChildBinTest$interceptPreds)
+                              'indiv' = hbnScaredChildBinTest$indivPreds,
+                              'noGi' = hbnScaredChildBinTest$noGiPreds,
+                              'intercept' = hbnScaredChildBinTest$interceptPreds)
 
 predColsScaredBinParent = list('sum' = hbnScaredParentBinTest$sumPreds, 
-                           'indiv' = hbnScaredParentBinTest$indivPreds,
-                           'noGi' = hbnScaredParentBinTest$noGiPreds,
-                           'intercept' = hbnScaredParentBinTest$interceptPreds)
+                               'indiv' = hbnScaredParentBinTest$indivPreds,
+                               'noGi' = hbnScaredParentBinTest$noGiPreds,
+                               'intercept' = hbnScaredParentBinTest$interceptPreds)
 
 
 predColsKsads = list('sum' = hbnKsadsTest$sumPreds, 
-                           'indiv' = hbnKsadsTest$indivPreds,
-                           'noGi' = hbnKsadsTest$noGiPreds,
-                           'intercept' = hbnKsadsTest$interceptPreds)
+                     'indiv' = hbnKsadsTest$indivPreds,
+                     'noGi' = hbnKsadsTest$noGiPreds,
+                     'intercept' = hbnKsadsTest$interceptPreds)
 ```
 
 # Run permutations for each metric and outcome
 
 ```{r}
 permQ2Child = permute(numPerms = nPerms, trueOutcome = hbnScaredChildTest$scaredSumChild, 
-        predCols = predColsScaredChild,
-        metric = 'q2')
+                      predCols = predColsScaredChild,
+                      metric = 'q2')
 
 permQ2Parent = permute(numPerms = nPerms, trueOutcome = hbnScaredParentTest$scaredSumParent, 
-        predCols = predColsScaredParent,
-        metric = 'q2')
+                       predCols = predColsScaredParent,
+                       metric = 'q2')
 
 
 permLogLossKsads = permute(numPerms = nPerms, trueOutcome = hbnKsadsTest$ksadsBin,
@@ -130,8 +134,8 @@ permLogLossKsads = permute(numPerms = nPerms, trueOutcome = hbnKsadsTest$ksadsBi
                            metric = 'crossEntropy')
 
 permAucKsads = permute(numPerms = nPerms, trueOutcome = hbnKsadsTest$ksadsBin,
-                           predCols = predColsKsads,
-                           metric = 'auc')
+                       predCols = predColsKsads,
+                       metric = 'auc')
 
 
 permQ2Child$reporter = 'Child'
@@ -180,7 +184,7 @@ permAucLong = permAucKsads %>%
 ```
 
 
-# Bootstraping
+# Bootstrapping
 
   * For SCARED-P/SCARED-C: Q2, RMSE
   * For KSADS: Log loss/AUC
@@ -188,48 +192,48 @@ permAucLong = permAucKsads %>%
 ```{r}
 # q2 (SCARED)
 bootQ2Child = boots(numBoots = nBoots, trueOutcome = hbnScaredChildTest$scaredSumChild, 
-        predCols = predColsScaredChild,
-        metric = 'q2')
+                    predCols = predColsScaredChild,
+                    metric = 'q2')
 
 bootQ2Parent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentTest$scaredSumParent, 
-        predCols = predColsScaredParent,
-        metric = 'q2')
+                     predCols = predColsScaredParent,
+                     metric = 'q2')
 
 # rmse (SCARED)
 bootRMSEChild = boots(numBoots = nBoots, trueOutcome = hbnScaredChildTest$scaredSumChild, 
-        predCols = predColsScaredChild,
-        metric = 'rmse')
+                      predCols = predColsScaredChild,
+                      metric = 'rmse')
 
 bootRMSEParent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentTest$scaredSumParent, 
-        predCols = predColsScaredParent,
-        metric = 'rmse')
+                       predCols = predColsScaredParent,
+                       metric = 'rmse')
 
 # log los (SCARED/KSADS)
 bootLogLossKsads = boots(numBoots = nBoots, trueOutcome = hbnKsadsTest$ksadsBin, 
-        predCols = predColsKsads,
-        metric = 'crossEntropy')
+                         predCols = predColsKsads,
+                         metric = 'crossEntropy')
 
 bootLogLossChild = boots(numBoots = nBoots, trueOutcome = hbnScaredChildBinTest$scaredBinChild, 
-        predCols = predColsScaredBinChild,
-        metric = 'crossEntropy')
+                         predCols = predColsScaredBinChild,
+                         metric = 'crossEntropy')
 
 bootLogLossParent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentBinTest$scaredBinParent, 
-        predCols = predColsScaredBinParent,
-        metric = 'crossEntropy')
+                          predCols = predColsScaredBinParent,
+                          metric = 'crossEntropy')
 
 
 # auc (SCARED/KSADS)
 bootAucKsads = boots(numBoots = nBoots, trueOutcome = hbnKsadsTest$ksadsBin, 
-        predCols = predColsKsads,
-        metric = 'auc')
+                     predCols = predColsKsads,
+                     metric = 'auc')
 
 bootAucChild = boots(numBoots = nBoots, trueOutcome = hbnScaredChildBinTest$scaredBinChild, 
-        predCols = predColsScaredBinChild,
-        metric = 'auc')
+                     predCols = predColsScaredBinChild,
+                     metric = 'auc')
 
 bootAucParent = boots(numBoots = nBoots, trueOutcome = hbnScaredParentBinTest$scaredBinParent, 
-        predCols = predColsScaredBinParent,
-        metric = 'auc')
+                      predCols = predColsScaredBinParent,
+                      metric = 'auc')
 
 
 # Label who the reporter is
@@ -417,40 +421,40 @@ bootPlotKsadsAuc
 Generate ROC curves for each model, then format them all on the same plot
 ```{r}
 rocSum <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$sumPreds,
-            smoothed = TRUE,
-            # arguments for ci
-            ci=TRUE, boot.n=100000, ci.alpha=0.9, stratified=FALSE,
-            # arguments for plot
-            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
-            print.auc=TRUE, show.thres=TRUE)
+              smoothed = TRUE,
+              # arguments for ci
+              ci=TRUE, boot.n=100000, ci.alpha=0.9, stratified=FALSE,
+              # arguments for plot
+              plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+              print.auc=TRUE, show.thres=TRUE)
 
 rocIndiv <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$indivPreds,
-            smoothed = TRUE,
-            # arguments for ci
-            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
-            # arguments for plot
-            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
-            print.auc=TRUE, show.thres=TRUE)
+                smoothed = TRUE,
+                # arguments for ci
+                ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+                # arguments for plot
+                plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+                print.auc=TRUE, show.thres=TRUE)
 
 rocNoGi <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$noGiPreds,
-            smoothed = TRUE,
-            # arguments for ci
-            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
-            # arguments for plot
-            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
-            print.auc=TRUE, show.thres=TRUE)
+               smoothed = TRUE,
+               # arguments for ci
+               ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+               # arguments for plot
+               plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+               print.auc=TRUE, show.thres=TRUE)
 
 
 rocIntercept <- roc(hbnKsadsTest$ksadsBin,hbnKsadsTest$interceptPreds,
-            smoothed = TRUE,
-            # arguments for ci
-            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
-            # arguments for plot
-            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
-            print.auc=TRUE, show.thres=TRUE)
+                    smoothed = TRUE,
+                    # arguments for ci
+                    ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+                    # arguments for plot
+                    plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+                    print.auc=TRUE, show.thres=TRUE)
 
 # put all roc objects in a list
-rocList = list('GI Sum' = rocSum, 'GI Indiv. Items' = rocIndiv, 'No GI' = rocNoGi, 'Intercept Only' = rocIntercept)
+rocList = list('GI Sum' = rocSum, 'GI Indiv. Items' = rocIndiv, 'Intercept Only' = rocIntercept, 'No GI' = rocNoGi)
 
 
 # use ggroc() function to plot ROC curves in ggplot!
@@ -460,7 +464,7 @@ rocPlot = ggroc(rocList) +
   theme(panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
         legend.position = 'right', legend.title = element_blank()) +
-  labs(x = 'Sensitivity', y = 'Specificity') +
+  labs(x = 'Specificity', y = 'Sensitivity') +
   scale_color_manual(values = myPal4_reorder, labels = c('GI Sum', 'GI Indiv. Items', 'Intercept Only', 'No GI'))
   
 rocPlot

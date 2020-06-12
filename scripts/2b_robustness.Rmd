@@ -27,6 +27,11 @@ source('helperFunctions.R')
 # Plot theme
 mytheme = theme_bw() 
 theme_set(mytheme)
+
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 
 ## Load in HBN Complete Case Training Set
@@ -124,6 +129,7 @@ ksadsPlot = hbnCompleteTrainKsads %>%
   labs(x = "", y = 'P(KSADS Diagnosis)', title = 'B\nClinician Consensus') +
   scale_fill_brewer(palette = 'Set2') +
   scale_color_brewer(palette = 'Set2') + 
+  scale_size_continuous(breaks = c(1, 5,50, 100, 200, 300, 400, 500)) +
   theme(panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
         text = element_text(face = 'bold'),
@@ -216,7 +222,9 @@ ksadsPlotAlt = hbnCompleteTrainKsads %>%
   theme(panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
         text = element_text(face = 'bold'),
-        legend.title = element_blank()) 
+        legend.title = element_blank()) +
+  scale_size_continuous(breaks = c(1, 5,50, 100, 200, 300, 400, 500))
+
 
 ksadsPlotAlt
 ```

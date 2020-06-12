@@ -19,7 +19,14 @@ knitr::opts_chunk$set(echo = TRUE, warning=FALSE)
 ```{r}
 library(tidyverse)
 library(VIM)
-source('helperFunctions.R')
+source("helperFunctions.R")
+theme_set(theme_bw())
+
+
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
 ```
 
 ## Load in HBN Training Set for Imputation
@@ -42,15 +49,30 @@ impVarsDV = names(imputationDV)[!names(imputationDV) %in% c('Identifiers', 'scar
   * Then bind back together, calculate sum scores
 
 ```{r}
-hbn3NNTrain =  kNN(imputationIV, k = 3, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsIV, addRandom = FALSE) %>%
-  left_join(., dplyr::select(kNN(imputationDV, k = 3, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsDV, addRandom = FALSE), -age), by = c('Identifiers', 'sex')) %>%
-  mutate(., scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0),
+# join an independent imputation of the IVs and the DVs
+hbn3NNTrain =  left_join(
+  kNN(imputationIV, k = 3, numFun = median, catFun = maxCat,
+      imp_var = FALSE, dist_var = impVarsIV, addRandom = FALSE), 
+  # impute the DV, wrapped in a select function to drop the age variable from the output before joining
+  dplyr::select(kNN(imputationDV, k = 3, numFun = median, catFun = maxCat, 
+                    imp_var = FALSE, dist_var = impVarsDV, addRandom = FALSE), 
+                -age), # <-- deselect age and close the select()  
+  # join the two results by the identifiers and gender:
+  by = c('Identifiers', 'sex')) %>% # <-- close the left_join; pipe result into subsequent mutate()
+  # compute further variables on the resultant imputed and merged data:
+  mutate(scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0),
          scaredBinParent = ifelse(scaredSumParent >= 25, 1, 0),
          cbclGISum = stomachache_cramps + vomiting + constipated + nausea)
 
-hbn9NNTrain = kNN(imputationIV, k = 9, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsIV) %>%
-  left_join(., dplyr::select(kNN(imputationDV, k = 9, numFun = median, catFun = maxCat, imp_var = FALSE, dist_var = impVarsDV, addRandom = FALSE), -age), by = c('Identifiers', 'sex')) %>%
-  mutate(., scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0),
+# Repeat the above using a 9-nearest-neighbor imputation model
+hbn9NNTrain = left_join(
+  kNN(imputationIV, k = 9, numFun = median, catFun = maxCat, 
+      imp_var = FALSE, dist_var = impVarsIV),
+  dplyr::select(kNN(imputationDV, k = 9, numFun = median, catFun = maxCat, 
+                    imp_var = FALSE, dist_var = impVarsDV, addRandom = FALSE), 
+                -age), # <-- deselect age and close the select() 
+  by = c('Identifiers', 'sex')) %>% # <-- close the left_join; pipe result into subsequent mutate()
+  mutate(scaredBinChild = ifelse(scaredSumChild >= 25, 1, 0),
          scaredBinParent = ifelse(scaredSumParent >= 25, 1, 0),
          cbclGISum = stomachache_cramps + vomiting + constipated + nausea)
 

@@ -16,9 +16,25 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Load Tidyverse
-```{r,message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, results='hide'}
+
+
 library(tidyverse)
 library(VIM)
+
+
+# To get the same random number generator across R versions (https://blog.revolutionanalytics.com/2019/05/whats-new-in-r-360.html)
+if (as.numeric(R.Version()$major) >= 3 & as.numeric(R.Version()$minor) >= 6.0){ 
+  RNGkind(sample.kind="Rounding")
+}
+```
+
+# Make file structure
+```{r}
+system('mkdir ../cleanData') # to output the clean data
+system('mkdir ../plots') # to output results from subsequent analysis scripts
+system('mkdir ../models') # to output results from subsequent analysis scripts
+system('mkdir ../output') # to output results from subsequent analysis scripts
 ```
 
 
@@ -29,78 +45,93 @@ library(VIM)
 ```{r SB init cleaning}
 # Pull in GI data GI symptoms, adoption, sex, age (but we won't use this age because it is rounded)
 SBdata = read.csv("../rawData/GIANXSx_SB.csv", stringsAsFactors = FALSE) %>%
-  dplyr::select(., starts_with('GI_Baseline'), SUBID, bl_age_gi_new, International_adoption, Sex) %>%
-  mutate(., CBCL_GI_sum = GI_Baseline_nausea + GI_Baseline_stom_cramps + GI_Baseline_vomit + GI_Baseline_constip,
-         nausea = GI_Baseline_nausea, 
-                stomachache_cramps = GI_Baseline_stom_cramps, 
-                constipated = GI_Baseline_constip, 
-                vomiting = GI_Baseline_vomit) %>%
-  filter(., CBCL_GI_sum <=10) %>% # Exclude outliers
-  dplyr::select(., -GI_Baseline_nausea, -GI_Baseline_stom_cramps, -GI_Baseline_constip, -GI_Baseline_vomit)
+  dplyr::select(starts_with('GI_Baseline'), SUBID, bl_age_gi_new, International_adoption, Sex) %>%
+  # Compute the CBCL GI sum score by summing GI individual items for each subject:
+  mutate(CBCL_GI_sum = rowSums(cbind(GI_Baseline_nausea, GI_Baseline_stom_cramps, GI_Baseline_vomit, GI_Baseline_constip))) %>%
+  # simply rename the GI individual items now, to drop the prefix GI_Baseline:
+  rename_at(vars(starts_with("GI_Baseline_")), ~case_when(
+    grepl("nausea", .) ~ "nausea",
+    grepl("stom_cramps", .) ~ "stomachache_cramps",
+    grepl("constip", .) ~ "constipated",
+    grepl("vomit", .) ~  "vomiting"
+  )) %>%
+  # Exclude outliers:
+  filter(CBCL_GI_sum <= 10)
 
 # Pull in SB master for non-rounded ages
 sbMaster = read.csv('../rawData/sbMaster.csv', stringsAsFactors = FALSE)
 sbMasterLong = sbMaster %>%
-  tidyr::gather(., key = 'wave', value = 'age', contains('SUBAGE_Session')) %>%
+  # convert the data to long format, one row for each subject X timepoint (wave)
+  tidyr::gather(key = 'wave', value = 'age', contains('SUBAGE_Session')) %>%
+  # create a new column (in long format) to indicate the wave that each row corresponds to
   mutate(name = case_when(
     wave == 'SUBAGE_Session1' ~  paste0(IDENT_SUBID, '_pre'),
     wave == 'SUBAGE_session2' ~  paste0(IDENT_SUBID),
     wave == 'SUBAGE_session3' ~ paste0(IDENT_SUBID, '_fu1'),
     wave == 'SUBAGE_session4' ~ paste0(IDENT_SUBID, '_fu2')
   ),
+  # also convert the age into years
   ageYrs = age/12) %>%
-  dplyr::filter(., !is.na(ageYrs)) 
+  # finally, filter by subjects who have age data entered
+  dplyr::filter(!is.na(ageYrs)) 
 
-# Get SCARED sums
-sbScaredIndiv = read.csv('../rawData/SB_scared_individual_items.csv', stringsAsFactors = FALSE) %>%
-   dplyr::select(., -sum_scared)
+# Get SCARED individual items
+sbScaredIndiv = read.csv('../rawData/SB_scared_individual_items.csv', 
+                         stringsAsFactors = FALSE) %>%
+   dplyr::select(-sum_scared)
 
 ```
 
-## Clean SCARED SB data, imputing where needed
+## Clean SCARED SB data, imputing where necessary
 ```{r SB Imputing, message=FALSE, warning=FALSE}
-# Count how many NAs  
+# Count how many NAs are in each row (by subject)
 sbScaredIndiv$na_count <- apply(sbScaredIndiv, 1, function(x) sum(is.na(x)))
 
-# impute for people with missing (but less than 20 items missing) using 5-nn imputation
+# impute for people with missing (but 20 or fewer items missing) using 5-nn imputation
 sbScaredIndiv = sbScaredIndiv %>%
-  dplyr::filter(., na_count <= 20) %>%
-  dplyr::select(., -na_count) %>%
-  VIM::kNN(., k = 5, imp_var = FALSE) 
+  dplyr::filter(na_count <= 20) %>%
+  dplyr::select(-na_count) %>% # now discard the na_count column
+  VIM::kNN(data = ., k = 5, imp_var = FALSE) 
 
 # take sum of SCARED across rows
 sbScaredIndiv$sum_scared = rowSums(select(sbScaredIndiv, starts_with('SCARED')))
 
 # select just the sum score, and create the binarized threshold (1 = participants at or over clinical threshold of 25, 0 = below threshold)
 sbScaredIndiv = sbScaredIndiv %>% 
-  dplyr::select(., SUBID, sum_scared) %>%
+  dplyr::select(SUBID, sum_scared) %>%
   mutate(scaredBin = ifelse(sum_scared >= 25, 1, 0))
 
 
 ```
 
 ## Correct SB ages in this chunk
-```{r}
+```{r correcting SB ages}
 # Previously, ages had been rounded down to the nearest year
 # Now we pull in the exact ages from the SB master, and match the exact age where the rounding happened
 sbMasterGrouped = sbMasterLong %>%
   group_by(IDENT_SUBID) %>%
-  summarise(n = n(), 
-            firstAge = ageYrs[1], secondAge = ageYrs[2], thirdAge = ageYrs[3], fourthAge = ageYrs[4],
-            firstAgeFloor = floor(ageYrs[1]), secondAgeFloor = floor(ageYrs[2]), thirdAgeFloor = floor(ageYrs[3]), fourthAgeFloor = floor(ageYrs[4]),
-            firstAgeRound = round(ageYrs[1]), secondAgeRound = round(ageYrs[2]), thirdAgeRound = round(ageYrs[3]), fourthAgeRound = round(ageYrs[4])) %>%
-  dplyr::select(., SUBID = IDENT_SUBID, n, firstAge, secondAge, thirdAge, fourthAge, contains('Floor'), contains('Round')) %>%
-  left_join(SBdata)
+  # create a new column for the age at each wave (timepoint):
+  summarise(n=n(), firstAge=ageYrs[1], secondAge=ageYrs[2], thirdAge=ageYrs[3], fourthAge=ageYrs[4]) %>%
+  # find the floor and nearest integer of the above ages:
+  mutate_at(vars(contains("Age",ignore.case = F)), .funs = list("Floor"=floor, "Round"=round)) %>%
+  # remove the underscore from the auto-generated variable names:
+  rename_at(vars(contains("Floor"), contains("Round")), ~sub("_", "", .)) %>%
+  # select resultant variables; merge with the outcome and predictor variables by subject:
+  dplyr::select(SUBID = IDENT_SUBID, n, contains("Age", ignore.case = F)) %>%
+  left_join(SBdata, by = "SUBID")
 
 
-# Correct the SB ages since they were just integers before:
-# If the age matches an age rounded down, use the age from that wave
-# If not, it should match a rounded age (to NEAREST integer) from that wave
+# Correct the SB ages since they were just integers before,as follows:
+## 1. If the age matches an age rounded down, use the age from that wave
+## 2. If not, it should match a rounded age (to NEAREST integer) from that wave
 ageCorrectedSB = sbMasterGrouped %>%
-  dplyr::filter(., !is.na(bl_age_gi_new)) %>%
+  dplyr::filter(!is.na(bl_age_gi_new)) %>%
   dplyr::group_by(SUBID) %>%
+  # first flag rows in which a match occurs with the floored age:
   mutate(matchFloor = ifelse(bl_age_gi_new %in% c(firstAgeFloor, secondAgeFloor, thirdAgeFloor, fourthAgeFloor), 1, 0),
+         # also flag rows in which a match occurs with the roundeded age:
          matchRound = ifelse(bl_age_gi_new %in% c(firstAgeRound, secondAgeRound, thirdAgeRound, fourthAgeRound), 1, 0),
+         # now use whichever match occurred as the correct "ageCorrect":
          ageCorrect = case_when(
            matchFloor == 1 & bl_age_gi_new == firstAgeFloor ~ firstAge,
            matchFloor == 1 & bl_age_gi_new == secondAgeFloor ~ secondAge,
@@ -110,19 +141,20 @@ ageCorrectedSB = sbMasterGrouped %>%
            matchRound == 1 & bl_age_gi_new == secondAgeRound ~ secondAge,
            matchRound == 1 & bl_age_gi_new == thirdAgeRound ~ thirdAge,
            matchRound == 1 & bl_age_gi_new == fourthAgeRound ~ fourthAge,
-           SUBID %in% c('SB024', 'SB073', 'SB074', 'SB092', 'SB164', 'SB252', 'SB270', 'SB289', 'SB319', 'SB372') ~ firstAge # a few need to be hard coded
-         )) %>%
-  dplyr::select(., -contains('Floor'), -contains('Round'), -firstAge, -secondAge, -thirdAge, -fourthAge) %>%
-  mutate(., bl_age_gi_new = ageCorrect) %>%
-  dplyr::select(., -ageCorrect, -n)
-
+            # a few need to be hard coded by taking the earliest age:
+           SUBID %in% c('SB024', 'SB073', 'SB074', 'SB092', 'SB164', 'SB252', 'SB270', 'SB289', 'SB319', 'SB372') ~ firstAge
+  )) %>% # close the case_when() and the mutate()
+  # delete the age variables used as intermediary matching criteria:
+  dplyr::select(., -contains('Floor'), -contains('Round'), -firstAge, -secondAge, -thirdAge, -fourthAge, -bl_age_gi_new) %>%
+  # rename our age variable; and de-select desired columns:
+  select(bl_age_gi_new = ageCorrect, everything(), -n)
 ```
 
 ## For SB, join GI/demogs data with SCARED, write cleaned data to CSV
-```{r}
+```{r, warning=FALSE}
 # Join the two frames and drop NA values
 sb = left_join(sbScaredIndiv, ageCorrectedSB) %>%
-  drop_na(., CBCL_GI_sum, bl_age_gi_new, Sex, International_adoption) 
+  drop_na(CBCL_GI_sum, bl_age_gi_new, Sex, International_adoption) 
 
 
 # write to clean csv folder
@@ -143,17 +175,27 @@ ELFKscared$sum_scared = rowSums(select(ELFKscared, starts_with('SCARED')))
 
 #merge the two dfs based on SUBID
 elfk  = left_join(ELFKcbcl, ELFKscared, by="SUBID") %>%
-  left_join(., ELFKdemo, by = "SUBID") %>%
-  mutate(., CBCL_GI_sum = nausea + stomachache_cramps + vomiting + constipated)
+  left_join(ELFKdemo, by = "SUBID") %>%
+  mutate(CBCL_GI_sum = nausea + stomachache_cramps + vomiting + constipated)
 
 
 #make predictor variable + clean
 elfk = elfk %>%
-  mutate(., CBCL_GI_sum = nausea + stomachache_cramps + vomiting + constipated,
+  # compute the CBCL GI sum scores:
+  mutate(CBCL_GI_sum = nausea + stomachache_cramps + vomiting + constipated,
+         # create a binary factor indicating if a subject was internationally adopted:
          International_adoption = ifelse(group == 0, 0, 1)) %>%
-  dplyr::select(., SUBID, CBCL_GI_sum, nausea, stomachache_cramps, vomiting, 
-                constipated, bl_age_gi_new = age, Sex = sex, time1_scared_11removed_average, International_adoption, sum_scared) %>%
-  drop_na(., CBCL_GI_sum, bl_age_gi_new, Sex, International_adoption, time1_scared_11removed_average) %>%
+  # Select and rename varables as needed
+  dplyr::select(SUBID, CBCL_GI_sum,
+                # the raw GI items:
+                nausea, stomachache_cramps, vomiting, constipated, 
+                # rename age and sex for later merging with other data frames:
+                bl_age_gi_new = age, Sex = sex, 
+                # computed variables:
+                time1_scared_11removed_average, International_adoption, sum_scared) %>%
+  # drop NAs by selected columns:
+  drop_na(CBCL_GI_sum, bl_age_gi_new, Sex, International_adoption, time1_scared_11removed_average) %>%
+  # finally, apply thresholding to the scared suum scores to create scaredBin (as above):
   mutate(scaredBin = ifelse(sum_scared >= 25, 1, 0))
   
 # write to clean csv folder

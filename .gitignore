@@ -8,3 +8,4 @@ miscDocuments/
 .RData
 .RHistory
 .dropbox
+*.DS_Store

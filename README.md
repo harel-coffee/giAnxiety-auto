@@ -1,4 +1,4 @@
-# Predicting Mental Health Risk In Primary Healthcare Settings: A Rapid Gastrointestinal Screener for Mental Health Outcomes in Youth
+#  Using Gastrointestinal Distress Reports to Predict Youth Anxiety Risk: Implications for Mental Health Literacy and Community Care
 
 Paul A. Bloom, Ian Douglas, Michelle VanTieghem, Nim Tottenham, & Bridget Callaghan
 

@@ -1,12 +1,11 @@
 #  Using Gastrointestinal Distress Reports to Predict Youth Anxiety Risk: Implications for Mental Health Literacy and Community Care
 
+Preprint: https://psyarxiv.com/zgavu/
 Paul A. Bloom, Ian Douglas, Michelle VanTieghem, Nim Tottenham, & Bridget Callaghan
 
 ## Repository for analysis on GI items predicting anxiety
 
 All analysis code can be found in the scripts folder. Analyses largely follow the preregistration found at https://osf.io/687ky
-
-Manuscript currently in prep!
 
 
 ## Scripts Roadmap

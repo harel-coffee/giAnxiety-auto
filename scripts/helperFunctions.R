@@ -1,6 +1,6 @@
 # Paul A. Bloom
 # October 2019
-# Helper Functions for "Predicting Mental Health Risk In Primary Healthcare Settings: A Rapid Gastrointestinal Screener for Mental Health Outcomes in Youth"
+# Helper Functions for "Using Gastrointestinal Distress Reports to Predict Youth Anxiety Risk: Implications for Mental Health Literacy and Community Care"
 
 
 
@@ -10,10 +10,10 @@
 # yHat = model output probability
 # y = true class
 crossEntropy = Vectorize(function(yHat, y){
-  if (y == 1){
-    return (-log(yHat))
+  if (y == 1){ # positive cases assumed to be coded as "1" (neg. will be "0")
+    return (-log(yHat)) # <-- for positive cases
   }
-  else{
+  else{ # the true case is negative:
     return (-log(1-yHat))
   }
 })
@@ -27,6 +27,7 @@ crossEntropy = Vectorize(function(yHat, y){
 rMSE = function(yHat, y){
   residuals = y - yHat
   output = sqrt(mean(residuals^2))
+  return(output)
 }
 
 
@@ -91,36 +92,35 @@ percentBetter = function(column1, column2){
 # Function to run a permutation test for each input model -- returns a dataframe of permuted results (true outcomes shuffled) for each set of predictions
 # numPerms = number of iterations of permutations to run
 # trueOutcome = true outome values vector
-# predCols = a named list of vectors of predicted values (length should match trueOutcome)
+# predCols = a named list of vectors of predicted values (vector lengths should match length of trueOutcome)
 # metric = model evaluation metric to calculate ('rmse', 'crossEntropy', 'auc', or 'q2')
 
 permute = function(numPerms, trueOutcome, predCols, metric){
-  permFrame = tibble(index = 1:numPerms)
+  permFrame = tibble(index = 1:numPerms) # create a data frame with one row for each permutation repetition
   for (i in 1:numPerms){
-      # set the seed each iteration of the loop -- ensuring this function should give the same results if run multiple times with the same data
-      set.seed(i)
+    # set the seed each iteration of the loop -- ensuring this function should give the same results if run multiple times with the same data
+    set.seed(i)
     
-      # shuffle the outcome
-      sampleIndices = sample(1:length(trueOutcome), size = length(trueOutcome), replace=FALSE)
-      permOutcome = trueOutcome[sampleIndices]
-      
-      # for each set of predictions, get model performance metric
-      for (j in 1:length(predCols)){
-        if (metric == 'rmse'){
-          permFrame[i, j + 1] = rMSE(predCols[[j]], permOutcome)
-        }
-        else if (metric == 'crossEntropy'){
-          permFrame[i, j + 1] = mean(crossEntropy(predCols[[j]], permOutcome))
-        }
-        else if (metric == 'auc'){
-          permFrame[i, j + 1] = pROC::auc(permOutcome, predCols[[j]])
-        }
-        else if (metric == 'q2'){
-          permFrame[i, j + 1] = q2(yHat = predCols[[j]], y = permOutcome)
-        }
+    # shuffle the outcome
+    permOutcome = sample(trueOutcome, size = length(trueOutcome), replace = F)
+    
+    # for each set of predictions, get model performance metric against this iteration's permuted outcome data
+    for (j in 1:length(predCols)){
+      if (metric == 'rmse'){
+        permFrame[i, j + 1] = rMSE(predCols[[j]], permOutcome)
       }
+      else if (metric == 'crossEntropy'){
+        permFrame[i, j + 1] = mean(crossEntropy(predCols[[j]], permOutcome))
+      }
+      else if (metric == 'auc'){
+        permFrame[i, j + 1] = pROC::auc(permOutcome, predCols[[j]])
+      }
+      else if (metric == 'q2'){
+        permFrame[i, j + 1] = q2(yHat = predCols[[j]], y = permOutcome)
+      }
+    }
   }
-  # rename output dataframe with the names of the predCols list items
+  # rename output dataframe with the names of the predCols list items (leaving the column "index" as is)
   names(permFrame)[-1] = names(predCols)
   return(permFrame)
 }
@@ -128,22 +128,27 @@ permute = function(numPerms, trueOutcome, predCols, metric){
 
 # bestPermute() -----------------------------------------------------------
 
-# From the output of the permute() function -- finds the permuted distribution with the best median, uses that for all as baseline for comparisons
-# This is so we can compare all models for a given outcome to the same permuted null
+# From the output of the permute() function -- finds the permuted distribution (the column of the data frame output from permute()) 
+# with the best median, and uses that for all as baseline for comparisons.
+# This is so we can compare all models for a given outcome to the same permuted null.
 # The output dataframe has all permuted distributions set to the best one (highest median performance).
-# permDataFrame = a dataframe of permuted results, as output by the permute() function
-# metric = scoring metric used ('auc', 'q2', 'crossEntropy', or 'rmse')
+# permDataFrame = "a dataframe of permuted results, as output by the permute() function"
+# metric = "scoring metric used ('auc', 'q2', 'crossEntropy', or 'rmse')"
 
 
 bestPermute = function(permDataFrame, metric){
+  stopifnot(metric %in% c('auc', 'q2', 'crossEntropy', 'rmse')) # quick check that "metric" is entered correctly
+  stopifnot(length(dim(permDataFrame)) == 2) # ensure permDataFrame is (at least) a two-dimensional object
+  
+  # Seperately list the possible loss functions, according to if they should be maximized or minimized.
   maxFuns = c('auc', 'q2')
   minFuns = c('crossEntropy', 'rmse')
   
-  # if 'best' means metric should be maximized
-  if (metric %in% maxFuns){
+  # if 'best' means metric should be maximized, extract the column with the largest median desired metric
+  if (metric %in% maxFuns){ # ("sum", "indiv", & "noGi" were the names of predCols supplied to `permute()`)
     bestMedianIndex = which.max(summarise_all(dplyr::select(permDataFrame, sum, indiv, noGi), .funs = median)) + 1
   }
-  # if 'best' means metric should be minimized
+  # if 'best' means metric should be minimized, extract the column with the smallest median desired metric
   else if (metric %in% minFuns){
     bestMedianIndex = which.min(summarise_all(dplyr::select(permDataFrame, sum, indiv, noGi), .funs = median)) + 1
   }
@@ -160,7 +165,7 @@ bestPermute = function(permDataFrame, metric){
 # boots() -----------------------------------------------------------------
 
 
-# Function to run a bootstrapping for each input model
+# Function to run a bootstrapping for each input model, analogous to `permute()` above
 # Returns a dataframe of all bootstrap results for each model
 # numBoots = number of iterations of bootstrapping to run
 # trueOutcome = vector of true outcomes
@@ -174,8 +179,7 @@ boots = function(numBoots, trueOutcome, predCols, metric){
     set.seed(i)
     
     # Create a bootstrap resampling of the outcomes
-    sampleIndices = sample(1:length(trueOutcome), size = length(trueOutcome), replace=TRUE)
-    bootOutcome = trueOutcome[sampleIndices]
+    bootOutcome = sample(trueOutcome, size = length(trueOutcome), replace=TRUE)
     
     # For each vector of predictions, get the same set of resampled items, and calculate model performance metric
     for (j in 1:length(predCols)){
@@ -209,16 +213,16 @@ boots = function(numBoots, trueOutcome, predCols, metric){
 makePreds = function(testData, modelsFrame, modelType){
   numCols = ncol(testData)
   
-  # For each model, use posterior_linpred() to get posterior predictions, then take the median prediction for each participant
+  # For each model, use `rstanarm::posterior_linpred()` to get posterior predictions, then take the median prediction for each participant
   for (i in 1:nrow(modelsFrame)){
-  	if (modelType == 'linear'){
-    	predictions = data.frame(posterior_linpred(modelsFrame$modObject[[i]], newdata = testData))%>%
-    		summarise_all(list(median = median)) %>% t() %>% as.vector()
-  	}
-  	else if (modelType == 'logistic'){
-  		predictions = data.frame(posterior_linpred(modelsFrame$modObject[[i]], transform = TRUE, newdata = testData))%>%
-    		summarise_all(list(median = median)) %>% t() %>% as.vector()
-  	}
+    if (modelType == 'linear'){
+      predictions = data.frame(posterior_linpred(modelsFrame$modObject[[i]], newdata = testData))%>%
+        summarise_all(list(median = median)) %>% t() %>% as.vector()
+    }
+    else if (modelType == 'logistic'){
+      predictions = data.frame(posterior_linpred(modelsFrame$modObject[[i]], transform = TRUE, newdata = testData))%>%
+        summarise_all(list(median = median)) %>% t() %>% as.vector()
+    }
     # add new column to testData with predictions
     testData[,numCols + i] = predictions
   }
@@ -269,7 +273,7 @@ GeomFlatViolin <-
                             alpha = NA, linetype = "solid"),
           
           required_aes = c("x", "y")
-)
+  )
 
 geom_flat_violin <- function(mapping = NULL, data = NULL, stat = "ydensity",
                              position = "dodge", trim = TRUE, scale = "area",

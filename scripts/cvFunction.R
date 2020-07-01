@@ -3,29 +3,41 @@
 # Big ugly function to cross-validate a bunch of models at once!
 
 # inputData = the input dataframe for conducting cross-validation -- must have variable names as specified by the model formula objects
-# outcomeColumn = a string matching the column name of the the outcome variable being predicted by each model
+# outcomeColumn = a string matching the column name of the the outcome variable in inputData being predicted by each model
 # metric = model scoring metric, can be (rMSE, crossEntropy, or q2)
 # numFolds = number of folds of cross validation to use (i.e. 10-fold)
 # cvRounds = number of independently-seeded iterations of k-fold cross-validation to do
-# sumFormulas, indivFormulas, noGiFormulas, interceptFormula = model formulat objects, regression model formula specification for each modelto be cross-validated. Each one is a list object 
-# modType = specify whether lm or glm (linear vs. logistic regressions)
+# sumFormulas, indivFormulas, noGiFormulas, interceptFormula = model formulae objects, regression model formula specification for each modelto be cross-validated. Each one is a list object 
+# modType = The function `lm` or `glm`, specifying whether lm or glm (linear vs. logistic regressions)
 cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRounds, 
                               sumFormulas, indivFormulas, noGiFormulas, interceptFormula, modType){
+  # Some checks for input errors
+  stopifnot(
+    outcomeColumn %in% names(inputData),
+    metric %in% c('rMSE', 'crossEntropy', 'q2'),
+    all(map_lgl(list(sumFormulas, indivFormulas, noGiFormulas, interceptFormula), function(x) {
+      map_lgl(x, function(xx) {all(is_formula(xx))})})), # check that the elements of each formulae list are all formulae
+    is_function(modType)
+  )
   
   for (j in 1:cvRounds){
     # set the seed differently each time. This means that if this CV function is run multiple times for the same data, we should get the same results
     set.seed(j)
 
     # Split the data
-    folds = caret::createFolds(inputData[[outcomeColumn]], k = numFolds)
-    cvFrame = data.frame(cvFold = 1:numFolds)
-    cvFrame$cvRound = j
+    folds = caret::createFolds(inputData[[outcomeColumn]], k = numFolds) # outputs a list, length k, with the indices of each fold
+    cvFrame = data.frame(cvFold = 1:numFolds) # create a data frame containing a row for each of the k folds
+    cvFrame$cvRound = j # create a column to indicate which cv round this is (long format)
     
     # Do k-fold cross-val for each model
     for (i in 1:numFolds){
       # Set up train/test set for each fold
       innerTrain = inputData[-folds[[i]],]
       innerTest = inputData[folds[[i]],]
+      
+      # Fit each type of model on the i-th train data, and store the result in a new column of cvFrame, in the i-th row.
+      # Each model type (sum, indiv, noGi, intercept) are contained in their own column, each row pertains to the identical i-th data partition
+      # (Ensure models are fit using the function specified in modType)
 
       # Models/Predictions for each model
       if (identical(modType, lm)){ # if models are linear regression
@@ -50,7 +62,8 @@ cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRoun
         # Intercept Only
         cvFrame$modInt[i] = list(do.call(modType, args = list(formula = interceptFormula[[1]], data = innerTrain)))
         
-        # preds
+        # Now generate the predictions from each of these models, and store them as a new column within the test data (in the i-th fold's row))
+        # Preds:
         innerTest$modSum1Preds = as.vector(predict(cvFrame$modSum1[i], newdata = innerTest))[[1]]
         innerTest$modSum2Preds = as.vector(predict(cvFrame$modSum2[i], newdata = innerTest))[[1]]
         innerTest$modSum3Preds = as.vector(predict(cvFrame$modSum3[i], newdata = innerTest))[[1]]
@@ -64,7 +77,10 @@ cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRoun
         innerTest$modNoGi3Preds = as.vector(predict(cvFrame$modNoGi3[i], newdata = innerTest))[[1]]
         innerTest$modNoGi4Preds = as.vector(predict(cvFrame$modNoGi4[i], newdata = innerTest))[[1]]
         innerTest$modIntPreds = as.vector(predict(cvFrame$modInt[i], newdata = innerTest))[[1]]
-      } else if (identical(modType, glm)){ # If models are logistic regressions
+      } else if (identical(modType, glm)){ 
+        
+        # Repeat the code for this process identically, for the case when the models are logistic regressions
+        
         # Summed models
         cvFrame$modSum1[i] = list(do.call(modType, args = list(formula = sumFormulas[[1]], data = innerTrain, family = binomial)))
         cvFrame$modSum2[i] = list(do.call(modType, args = list(formula = sumFormulas[[2]], data = innerTrain, family = binomial)))
@@ -86,7 +102,7 @@ cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRoun
         # Intercept Only
         cvFrame$modInt[i] = list(do.call(modType, args = list(formula = interceptFormula[[1]], data = innerTrain, family = binomial)))
         
-        
+        # Preds:
         innerTest$modSum1Preds = as.vector(predict(cvFrame$modSum1[i], newdata = innerTest, type ='response'))[[1]]
         innerTest$modSum2Preds = as.vector(predict(cvFrame$modSum2[i], newdata = innerTest, type ='response'))[[1]]
         innerTest$modSum3Preds = as.vector(predict(cvFrame$modSum3[i], newdata = innerTest, type ='response'))[[1]]
@@ -101,7 +117,9 @@ cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRoun
         innerTest$modNoGi4Preds = as.vector(predict(cvFrame$modNoGi4[i], newdata = innerTest, type ='response'))[[1]]
         innerTest$modIntPreds = as.vector(predict(cvFrame$modInt[i], newdata = innerTest, type ='response'))[[1]]
       }
-      # Store metric values into output dataframe
+      
+      # Now, store metric values into output dataframe, one entry for each model/formula's column in the i-th row
+      
       # If the metric isn't cross-entropy -- can just output metric into output scoring frame (cvFrame)
       if (!identical(metric, crossEntropy)){
         cvFrame$modSum1Score[i] =  do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modSum1Preds))
@@ -117,6 +135,9 @@ cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRoun
         cvFrame$modNoGi3Score[i] =  do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modNoGi3Preds))
         cvFrame$modNoGi4Score[i] =  do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modNoGi4Preds))
         cvFrame$modIntScore[i] =  do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modIntPreds))
+        
+        # Repeat for the case when metric is crossEntropy with a slight modification:
+        
       } else if (identical(metric, crossEntropy)){ # If metric is crossEntropy, need to take mean across the output vector before putting into cvFrame
         cvFrame$modSum1Score[i] =  mean(do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modSum1Preds)))
         cvFrame$modSum2Score[i] =  mean(do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modSum2Preds)))
@@ -133,19 +154,22 @@ cvManyLinearModels = function(inputData, outcomeColumn, metric, numFolds, cvRoun
         cvFrame$modIntScore[i] =  mean(do.call(metric, args = list(y = innerTest[[outcomeColumn]], yHat = innerTest$modIntPreds)))
       }
     }
-    # If this is the first iteration of cv, set up cvIndivResults output
+    # If this is the first iteration of cv, set up cvIndivResults output.
+    # This will be a data frame in which to store the results from each cross validation round (to later aggregate/summarize)
     if (j == 1){
-      cvIndivResults = dplyr::select(cvFrame, contains('Score'), cvFold, cvRound)
+      # extract the columns with the output metrics scored on test data
+      cvIndivResults = dplyr::select(cvFrame, contains('Score'), cvFold, cvRound) 
     }else{ # Otherwise, for subsequent iterations, add additional cv results to the cvIndivResults dataframe via rbind()
       cvIndivResults = rbind(cvIndivResults, dplyr::select(cvFrame, contains('Score'), cvFold, cvRound))
     }
 
   }
-  # Summarize CV results across all folds
+  # Summarize CV results across all folds in all rounds for each model
   cvSummary = cvIndivResults %>%
     tidyr::gather(., key = 'model', value = 'Score', -contains('cv')) %>%
     group_by(model) %>%
     summarise(median = median(Score),
+              # record the distribution across the j cvRounds
               lwr95 = quantile(Score, probs= .025),
               upr95 = quantile(Score, probs = .975),
               lwr80 = quantile(Score, probs= .1),
